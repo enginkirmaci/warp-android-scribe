@@ -20,6 +20,7 @@ import android.view.ViewGroup
 import android.view.WindowInsets
 import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputMethodManager
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
@@ -73,11 +74,21 @@ class ScribeImeService : InputMethodService() {
             onRetry = ::retry,
             onDismissError = ::dismissError,
             onSettings = ::openSettings,
-            onToggleLanguage = ::toggleLanguage,
-            onToggleMode = ::toggleMode,
+            onToggleLanguage = ::toggleLanguagePicker,
+            onSelectLanguage = ::selectLanguage,
+            onToggleLayout = ::toggleLayout,
+            onUndo = ::undo,
+            onCut = ::cut,
+            onCopy = ::copy,
+            onPaste = ::pasteCurrent,
+            onMoveCursor = ::moveCursor,
             onToggleClipboard = ::toggleClipboard,
+            onExpandClipboard = ::expandClipboard,
             onCloseClipboard = ::closeClipboard,
             onInsertEntry = ::insertEntry,
+            onDeleteEntry = ::deleteEntry,
+            onClearClips = ::clearClips,
+            onCopyEntry = ::copyEntry,
             onSwitchKeyboard = ::switchKeyboard,
             onBackspace = ::backspace,
             onEnter = ::enter,
@@ -92,7 +103,8 @@ class ScribeImeService : InputMethodService() {
         lifecycleOwner = ImeLifecycleOwner().apply { onCreate() }
         clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         ui.language = prefs.language
-        ui.mode = prefs.mode
+        ui.shortcuts = prefs.shortcuts
+        ui.layout = KeyboardMode.COMPACT
         cleanupOldRecordings()
         cleanupClipboardCache()
     }
@@ -106,6 +118,7 @@ class ScribeImeService : InputMethodService() {
             setViewCompositionStrategy(
                 ViewCompositionStrategy.DisposeOnDetachedFromWindowOrReleasedFromPool,
             )
+            isHapticFeedbackEnabled = false
             attachLifecycleOwner(this)
             setContent {
                 ScribeTheme {
@@ -117,14 +130,31 @@ class ScribeImeService : InputMethodService() {
         // view, not from this ComposeView. Tag the whole window as well or the
         // first show throws "ViewTreeLifecycleOwner not found".
         window?.window?.decorView?.let(::attachLifecycleOwner)
+        window?.window?.decorView?.isHapticFeedbackEnabled = false
         installSystemBarInsetListener()
         return view
     }
 
     override fun onWindowShown() {
         super.onWindowShown()
+        ui.layout = KeyboardMode.COMPACT
+        ui.showLanguages = false
         installSystemBarInsetListener()
         updateSystemBarInset()
+    }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        if (keyCode == KeyEvent.KEYCODE_BACK) {
+            if (ui.showLanguages) {
+                ui.showLanguages = false
+                return true
+            }
+            if (ui.clipboardView != ClipboardView.HIDDEN) {
+                ui.clipboardView = ClipboardView.HIDDEN
+                return true
+            }
+        }
+        return super.onKeyDown(keyCode, event)
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -206,14 +236,15 @@ class ScribeImeService : InputMethodService() {
         super.onStartInputView(info, restarting)
         lifecycleOwner.onStart()
         ui.language = prefs.language
-        ui.mode = prefs.mode
+        ui.shortcuts = prefs.shortcuts
         ui.clipboard = buildClipboard()
-        ui.showClipboard = false
+        ui.clipboardView = ClipboardView.HIDDEN
+        ui.showLanguages = false
         ui.canRetry = pendingFile != null
         if (ui.phase != Phase.RECORDING && ui.phase != Phase.TRANSCRIBING) {
             ui.phase = if (pendingFile != null) Phase.ERROR else Phase.IDLE
             if (pendingFile != null) {
-                ui.error = ui.error ?: "Son dikte gönderilemedi."
+                ui.error = ui.error ?: "The last dictation could not be sent."
             }
         }
         registerClipboard()
@@ -224,7 +255,8 @@ class ScribeImeService : InputMethodService() {
         super.onFinishInputView(finishingInput)
         lifecycleOwner.onStop()
         unregisterClipboard()
-        ui.showClipboard = false
+        ui.clipboardView = ClipboardView.HIDDEN
+        ui.showLanguages = false
         if (finishingInput) {
             cancelActiveWork()
         }
@@ -269,17 +301,17 @@ class ScribeImeService : InputMethodService() {
     private fun startRecording() {
         if (ui.phase == Phase.TRANSCRIBING || ui.phase == Phase.RECORDING) return
         if (!prefs.isConfigured) {
-            showError("Önce ayarlardan token'ı gir.")
+            showError("Set the token and server URL in Settings first.")
             return
         }
         if (prefs.usesLocalNetwork && !hasLocalNetworkPermission()) {
-            showError("Yerel ağ izni yok. Ayarlar'dan izin ver veya UZAK modunu seç.")
+            showError("Local network permission is missing. Grant it in Settings or switch to Remote mode.")
             return
         }
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) !=
             PackageManager.PERMISSION_GRANTED
         ) {
-            showError("Mikrofon izni yok. Ayarlar'dan izin ver.")
+            showError("Microphone permission is missing. Grant it in Settings.")
             return
         }
 
@@ -289,7 +321,7 @@ class ScribeImeService : InputMethodService() {
             recorder.start()
         } catch (error: Exception) {
             file.delete()
-            showError("Mikrofon açılamadı: ${error.message}")
+            showError("Could not open the microphone: ${error.message}")
             return
         }
 
@@ -303,7 +335,8 @@ class ScribeImeService : InputMethodService() {
         ui.elapsedSecs = 0
         ui.error = null
         ui.canRetry = false
-        ui.showClipboard = false
+        ui.clipboardView = ClipboardView.HIDDEN
+        ui.showLanguages = false
         haptic(HapticFeedbackConstants.VIRTUAL_KEY)
 
         recordTicker = scope.launch {
@@ -346,14 +379,14 @@ class ScribeImeService : InputMethodService() {
             if (stopped.isFailure) {
                 file.delete()
                 activeFile = null
-                showError("Kayıt tamamlanamadı.")
+                showError("Recording could not be completed.")
                 return@launch
             }
             val size = withContext(Dispatchers.IO) { file.length() }
             if (size <= 44) {
                 file.delete()
                 activeFile = null
-                showError("Kayıt boş çıktı.")
+                showError("The recording was empty.")
                 return@launch
             }
 
@@ -375,7 +408,7 @@ class ScribeImeService : InputMethodService() {
     private fun retry() {
         val file = pendingFile ?: return
         if (!prefs.isConfigured) {
-            showError("Önce ayarlardan token'ı gir.")
+            showError("Set the token and server URL in Settings first.")
             return
         }
         transcribeJob?.cancel()
@@ -403,12 +436,12 @@ class ScribeImeService : InputMethodService() {
     private fun handleTranscript(transcript: ScribeClient.Result) {
         val text = transcript.text.trim()
         if (text.isEmpty()) {
-            showError("Konuşma algılanmadı.")
+            showError("No speech was detected.")
             return
         }
         val connection = currentInputConnection
         if (connection == null) {
-            showError("Metin alanı kapandı.")
+            showError("The text field closed.")
             return
         }
 
@@ -431,9 +464,9 @@ class ScribeImeService : InputMethodService() {
     }
 
     private fun friendlyError(error: Throwable): String = when (error) {
-        is ScribeException -> error.message ?: "Dikte başarısız."
-        is java.io.IOException -> "Sunucuya ulaşılamadı. Bağlantıyı kontrol et."
-        else -> "Dikte başarısız: ${error.message ?: error.javaClass.simpleName}"
+        is ScribeException -> error.message ?: "Dictation failed."
+        is java.io.IOException -> "Could not reach the server. Check the connection."
+        else -> "Dictation failed: ${error.message ?: error.javaClass.simpleName}"
     }
 
     private fun cancelActiveWork() {
@@ -454,7 +487,8 @@ class ScribeImeService : InputMethodService() {
         ui.elapsedSecs = 0
         ui.error = null
         ui.canRetry = false
-        ui.showClipboard = false
+        ui.clipboardView = ClipboardView.HIDDEN
+        ui.showLanguages = false
     }
 
     private fun dismissError() {
@@ -470,43 +504,145 @@ class ScribeImeService : InputMethodService() {
         ui.error = message
         ui.canRetry = false
         ui.locked = false
-        ui.showClipboard = false
+        ui.clipboardView = ClipboardView.HIDDEN
+        ui.showLanguages = false
     }
 
-    private fun toggleLanguage() {
-        ui.language = if (ui.language == "auto") "tr" else "auto"
-        prefs.language = ui.language
+    private fun toggleLanguagePicker() {
+        if (ui.phase == Phase.RECORDING || ui.phase == Phase.TRANSCRIBING) return
+        ui.clipboardView = ClipboardView.HIDDEN
+        ui.showLanguages = !ui.showLanguages
+    }
+
+    private fun selectLanguage(code: String) {
+        if (!isSupportedLanguage(code)) return
+        prefs.language = code
+        ui.language = code
+        ui.showLanguages = false
+    }
+
+    private fun toggleLayout() {
+        ui.showLanguages = false
+        ui.layout = if (ui.layout == KeyboardMode.COMPACT) {
+            KeyboardMode.FULL
+        } else {
+            KeyboardMode.COMPACT
+        }
         haptic(HapticFeedbackConstants.KEYBOARD_TAP)
     }
 
-    private fun toggleMode() {
-        val next = if (prefs.mode == ConnectionMode.LOCAL) {
-            ConnectionMode.REMOTE
+    private fun undo() {
+        val connection = currentInputConnection ?: return
+        if (!connection.performContextMenuAction(android.R.id.undo)) {
+            sendCtrl(connection, KeyEvent.KEYCODE_Z)
+        }
+        haptic(HapticFeedbackConstants.KEYBOARD_TAP)
+    }
+
+    private fun cut() {
+        val connection = currentInputConnection ?: return
+        if (connection.performContextMenuAction(android.R.id.selectAll)) {
+            if (!connection.performContextMenuAction(android.R.id.cut)) {
+                sendCtrl(connection, KeyEvent.KEYCODE_X)
+            }
         } else {
-            ConnectionMode.LOCAL
+            sendCtrl(connection, KeyEvent.KEYCODE_A)
+            sendCtrl(connection, KeyEvent.KEYCODE_X)
         }
-        prefs.mode = next
-        ui.mode = next
-        if (next == ConnectionMode.LOCAL && !hasLocalNetworkPermission()) {
-            showError("Yerel ağ izni yok. Ayarlar'dan izin ver.")
-        } else if (ui.phase == Phase.ERROR) {
-            ui.error = null
-            ui.phase = Phase.IDLE
+        haptic(HapticFeedbackConstants.KEYBOARD_TAP)
+    }
+
+    private fun copy() {
+        val connection = currentInputConnection ?: return
+        if (connection.performContextMenuAction(android.R.id.selectAll)) {
+            if (!connection.performContextMenuAction(android.R.id.copy)) {
+                sendCtrl(connection, KeyEvent.KEYCODE_C)
+            }
+        } else {
+            sendCtrl(connection, KeyEvent.KEYCODE_A)
+            sendCtrl(connection, KeyEvent.KEYCODE_C)
         }
+        haptic(HapticFeedbackConstants.KEYBOARD_TAP)
+    }
+
+    private fun pasteCurrent() {
+        val clip = runCatching { clipboard.primaryClip }.getOrNull()
+        if (clip == null || clip.itemCount == 0) {
+            showError("Clipboard is empty.")
+            return
+        }
+        scope.launch {
+            val entry = withContext(Dispatchers.IO) { collectClips(clip).firstOrNull() }
+            if (entry == null) {
+                showError("There is nothing in the clipboard to paste.")
+            } else {
+                insertEntry(entry)
+            }
+        }
+    }
+
+    private fun moveCursor(direction: Int) {
+        val connection = currentInputConnection ?: return
+        val keyCode = if (direction < 0) {
+            KeyEvent.KEYCODE_DPAD_LEFT
+        } else {
+            KeyEvent.KEYCODE_DPAD_RIGHT
+        }
+        val now = SystemClock.uptimeMillis()
+        connection.sendKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, keyCode, 0))
+        connection.sendKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, keyCode, 0))
         haptic(HapticFeedbackConstants.KEYBOARD_TAP)
     }
 
     private fun toggleClipboard() {
-        ui.showClipboard = !ui.showClipboard
-        if (ui.showClipboard) {
-            refreshClipboard()
-            ui.clipboard = buildClipboard()
+        ui.showLanguages = false
+        if (ui.clipboardView == ClipboardView.QUICK) {
+            ui.clipboardView = ClipboardView.HIDDEN
+            return
         }
+        ui.clipboardView = ClipboardView.QUICK
+        refreshClipboard()
+        ui.clipboard = buildClipboard()
+        haptic(HapticFeedbackConstants.KEYBOARD_TAP)
+    }
+
+    private fun expandClipboard() {
+        if (ui.phase == Phase.RECORDING || ui.phase == Phase.TRANSCRIBING) return
+        ui.showLanguages = false
+        ui.clipboardView = ClipboardView.FULL
+        refreshClipboard()
+        ui.clipboard = buildClipboard()
         haptic(HapticFeedbackConstants.KEYBOARD_TAP)
     }
 
     private fun closeClipboard() {
-        ui.showClipboard = false
+        ui.clipboardView = ClipboardView.HIDDEN
+        ui.showLanguages = false
+    }
+
+    private fun deleteEntry(entry: ClipboardEntry) {
+        when (entry.kind) {
+            ClipKind.TRANSCRIPT -> prefs.removeRecentTranscript(entry.text)
+            else -> {
+                clipHistory.removeAll { it.id == entry.id }
+                entry.file?.delete()
+            }
+        }
+        ui.clipboard = buildClipboard()
+        haptic(HapticFeedbackConstants.KEYBOARD_TAP)
+    }
+
+    private fun clearClips() {
+        clipHistory.forEach { it.file?.delete() }
+        clipHistory.clear()
+        ui.clipboard = buildClipboard()
+        haptic(HapticFeedbackConstants.KEYBOARD_TAP)
+    }
+
+    private fun copyEntry(entry: ClipboardEntry) {
+        if (entry.kind == ClipKind.IMAGE || entry.text.isBlank()) return
+        clipboard.setPrimaryClip(ClipData.newPlainText("Scribe", entry.text))
+        haptic(HapticFeedbackConstants.KEYBOARD_TAP)
     }
 
     private fun insertEntry(entry: ClipboardEntry) {
@@ -514,15 +650,17 @@ class ScribeImeService : InputMethodService() {
             ClipKind.TEXT, ClipKind.TRANSCRIPT -> {
                 if (entry.text.isBlank()) return
                 currentInputConnection?.commitText(entry.text, 1)
-                ui.showClipboard = false
+                ui.clipboardView = ClipboardView.HIDDEN
+                ui.showLanguages = false
                 haptic(HapticFeedbackConstants.KEYBOARD_TAP)
             }
             ClipKind.IMAGE -> {
                 if (commitImage(entry)) {
-                    ui.showClipboard = false
+                    ui.clipboardView = ClipboardView.HIDDEN
+                    ui.showLanguages = false
                     haptic(HapticFeedbackConstants.KEYBOARD_TAP)
                 } else {
-                    showError("Bu alan görsel kabul etmiyor.")
+                    showError("This field does not accept images.")
                 }
             }
         }
@@ -575,6 +713,16 @@ class ScribeImeService : InputMethodService() {
         haptic(HapticFeedbackConstants.KEYBOARD_TAP)
     }
 
+    private fun sendCtrl(connection: InputConnection, keyCode: Int) {
+        val now = SystemClock.uptimeMillis()
+        connection.sendKeyEvent(
+            KeyEvent(now, now, KeyEvent.ACTION_DOWN, keyCode, 0, KeyEvent.META_CTRL_ON),
+        )
+        connection.sendKeyEvent(
+            KeyEvent(now, now, KeyEvent.ACTION_UP, keyCode, 0, KeyEvent.META_CTRL_ON),
+        )
+    }
+
     private fun insertText(text: String) {
         if (text.isEmpty()) return
         currentInputConnection?.commitText(text, 1)
@@ -625,8 +773,9 @@ class ScribeImeService : InputMethodService() {
                             kind = ClipKind.IMAGE,
                             file = file,
                             mime = mime,
-                            label = "Görsel",
+                            label = "Image",
                             source = source,
+                            createdAt = System.currentTimeMillis(),
                         ),
                     )
                     continue
@@ -640,8 +789,9 @@ class ScribeImeService : InputMethodService() {
                     id = UUID.randomUUID().toString(),
                     kind = ClipKind.TEXT,
                     text = text,
-                    label = "Pano",
+                    label = "Clipboard",
                     source = text,
+                    createdAt = System.currentTimeMillis(),
                 ),
             )
         }
@@ -707,7 +857,7 @@ class ScribeImeService : InputMethodService() {
                 id = "recent-$index",
                 kind = ClipKind.TRANSCRIPT,
                 text = text,
-                label = "SON",
+                label = "RECENT",
                 source = text,
             )
         }
@@ -730,8 +880,8 @@ class ScribeImeService : InputMethodService() {
             ?.forEach { it.delete() }
     }
 
-    private fun haptic(feedback: Int) {
-        window?.window?.decorView?.performHapticFeedback(feedback)
+    private fun haptic(@Suppress("UNUSED_PARAMETER") feedback: Int) {
+        // Vibration is off by request; the call sites stay for future toggles.
     }
 
     private fun hasLocalNetworkPermission(): Boolean =

@@ -15,6 +15,10 @@ enum class Phase { IDLE, RECORDING, TRANSCRIBING, ERROR }
 
 enum class ClipKind { TEXT, IMAGE, TRANSCRIPT }
 
+enum class KeyboardMode { COMPACT, FULL }
+
+enum class ClipboardView { HIDDEN, QUICK, FULL }
+
 data class ClipboardEntry(
     val id: String,
     val kind: ClipKind,
@@ -23,6 +27,7 @@ data class ClipboardEntry(
     val mime: String = "image/*",
     val label: String = "",
     val source: String = "",
+    val createdAt: Long = 0L,
 )
 
 /** Compose-observable state owned by [ScribeImeService]. */
@@ -31,13 +36,15 @@ class ScribeUiState {
     var locked by mutableStateOf(false)
     var elapsedSecs by mutableIntStateOf(0)
     var language by mutableStateOf("tr")
-    var mode by mutableStateOf(ConnectionMode.REMOTE)
+    var layout by mutableStateOf(KeyboardMode.COMPACT)
     var error by mutableStateOf<String?>(null)
     var canRetry by mutableStateOf(false)
-    var showClipboard by mutableStateOf(false)
+    var clipboardView by mutableStateOf(ClipboardView.HIDDEN)
+    var showLanguages by mutableStateOf(false)
     /** Height of the system navigation bar drawn over the IME window. */
     var systemBarInsetPx by mutableIntStateOf(0)
     var clipboard by mutableStateOf<List<ClipboardEntry>>(emptyList())
+    var shortcuts by mutableStateOf<List<String>>(emptyList())
 }
 
 class ScribeActions(
@@ -48,10 +55,20 @@ class ScribeActions(
     val onDismissError: () -> Unit,
     val onSettings: () -> Unit,
     val onToggleLanguage: () -> Unit,
-    val onToggleMode: () -> Unit,
+    val onSelectLanguage: (String) -> Unit,
+    val onToggleLayout: () -> Unit,
+    val onUndo: () -> Unit,
+    val onCut: () -> Unit,
+    val onCopy: () -> Unit,
+    val onPaste: () -> Unit,
+    val onMoveCursor: (Int) -> Unit,
     val onToggleClipboard: () -> Unit,
+    val onExpandClipboard: () -> Unit,
     val onCloseClipboard: () -> Unit,
     val onInsertEntry: (ClipboardEntry) -> Unit,
+    val onDeleteEntry: (ClipboardEntry) -> Unit,
+    val onClearClips: () -> Unit,
+    val onCopyEntry: (ClipboardEntry) -> Unit,
     val onSwitchKeyboard: () -> Unit,
     val onBackspace: () -> Unit,
     val onEnter: () -> Unit,

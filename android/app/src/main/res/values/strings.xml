@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Warp Scribe</string>
-    <string name="ime_label">Warp Scribe Klavye</string>
-    <string name="subtype_tr">Türkçe</string>
+    <string name="ime_label">Warp Scribe Keyboard</string>
+    <string name="subtype_en">English</string>
 </resources>

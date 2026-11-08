@@ -43,18 +43,30 @@ Two halves, two toolchains:
   none of these; a ComposeView in an IME will not compose without them.
 - State lives in `ScribeUiState` (Compose `mutableStateOf`) owned by the
   service; the UI is a pure function of it and `ScribeActions`.
-- The keyboard is a full Turkish QWERTY (`ScribeKeyboard.kt`): number row,
-  letter rows, shift/backspace, a `?123` symbol page, and the bottom
-  space/enter row. The top bar holds the Local/Remote chip, the green dictate
-  pill (`TR`/`OTO`) and the clipboard button. There is no chips row and no
-  bottom transcript strip; do not bring them back.
+- The keyboard opens compact (`KeyboardMode.COMPACT`) and resets to compact on
+  every `onWindowShown`; the full layout is a temporary switch, not a
+  preference. The top bar is the keyboard icon (tap toggles full QWERTY,
+  long-press opens Settings), the language code, **Dictate**, clipboard and
+  delete (hold repeats). Under it, `ScribePrefs.shortcuts` renders the
+  configurable slash commands (`/goal`, `/compact` by default). The compact
+  body is cursor arrows (hold repeats), space/enter, icon buttons for
+  `Undo`/`Cut`/`Copy`/`Paste`, and a single horizontal clipboard strip of
+  boxes; no punctuation row, no fixed starter row, no backspace beside the
+  arrows, and vibration is intentionally off. There is no Local/Remote chip and
+  no bottom transcript strip; do not bring them back.
 - The clipboard button opens a panel instead of the keyboard-switch key: one
-  grid of cards for every clip (text, `SON` transcript, image), with no
+  grid of cards for every clip (text, `RECENT` transcript, image), with no
   separate text/image sections. Text commits with `commitText`, an image
   copies to `cacheDir/clipboard` and goes through the
   `${applicationId}.files` `FileProvider` with
   `InputConnectionCompat.commitContent(connection, editorInfo, …)`. Some fields
   reject content; show the error and keep the panel state sane.
+- The quick grid expands to `ClipboardView.FULL`: `ALL`/`TEXT`/`IMAGES`/`RECENT`
+  filters, relative timestamps, long-press `Paste`/`Copy`/`Delete`, and a
+  two-tap `Clear all` that removes clips but keeps `RECENT` transcripts.
+  Search is deliberately v2: an IME-internal query needs the QWERTY routed to
+  it instead of the app's `InputConnection`. Clipboard history is session-only;
+  do not claim it survives process death.
 - The system's two-button keyboard bar (switch/hide) is drawn over the IME
   window, and the navigation-bar inset is reported as zero for
   `INPUT_METHOD` windows. Measure whether the IME window reaches the display
@@ -63,8 +75,10 @@ Two halves, two toolchains:
 - Audio: `WavRecorder` (16 kHz mono PCM16, `VOICE_RECOGNITION`), max 120 s.
   Delete the cache WAV on success/cancel and sweep stale files on service
   creation. Never leave a recording behind.
-- The language toggle sends `?lang=tr` or `?lang=auto`; `prefs.language`
-  persists the choice.
+- The language button opens the in-keyboard language panel and sends the
+  selected code as `?lang=…`; `SUPPORTED_LANGUAGES` is the shared list,
+  `prefs.language` persists the choice, and Settings uses the same list in a
+  drop-down.
 - Cleartext is limited to `<nas-lan>` in
   `res/xml/network_security_config.xml`. The public route is HTTPS and needs no
   exception.
@@ -73,10 +87,14 @@ Two halves, two toolchains:
   and requested from the settings screen; `ScribePrefs.usesLocalNetwork` is
   the gate, and the IME shows an error instead of a silent timeout. The
   Remote mode does not need this permission.
-- `ScribePrefs.mode` is `LOCAL` (`http://<nas-lan>:8787`) or `REMOTE`
-  (`https://<nas-host>`); both share one bearer token. The settings
-  screen and the keyboard's mode chip write the same preference. Do not add a
-  third host/port form.
+- `ScribePrefs.mode` is `LOCAL` or `REMOTE`; `localUrl` and `remoteUrl` are
+  editable, initialised to the owner's bridge (`http://<nas-lan>:8787` and
+  `https://<nas-host>`), and both share one bearer token. The
+  settings screen writes them; the keyboard has no mode chip. Remote must be
+  HTTPS. Do not add a third host/port form.
+- All app UI strings are English and the full keyboard layout is English
+  QWERTY. The dictation language is separate from the layout. Do not
+  reintroduce Turkish UI labels or Turkish letter keys.
 - Public path: Cloudflare Tunnel public hostname `<nas-host>` ->
   Nginx Proxy Manager -> `<nas-lan>:8787`. The NPM proxy host is
   `<nas-host>`, and the wildcard `*.engin.page` certificate covers
@@ -103,9 +121,13 @@ Device access from the laptop is through the NAS because the phone and laptop
 are isolated on Wi-Fi:
 
 ```sh
-ssh -f -N -L 127.0.0.1:39441:<phone-lan>:39441 <nas-lan>
+# On the NAS, discover the phone's current wireless-debugging port:
+avahi-browse -rt _adb-tls-connect._tcp
+ssh -f -N -L 127.0.0.1:39441:<phone-lan>:<port> <nas-lan>
 adb connect 127.0.0.1:39441
 ```
+
+The port changes when wireless debugging restarts; do not assume `39441`.
 
 ## Do not
 

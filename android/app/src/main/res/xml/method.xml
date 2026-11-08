@@ -3,8 +3,8 @@
     android:settingsActivity="com.engin.warpandroidscribe.SettingsActivity"
     android:supportsSwitchingToNextInputMethod="true">
     <subtype
-        android:imeSubtypeLocale="tr_TR"
+        android:imeSubtypeLocale="en_US"
         android:imeSubtypeMode="keyboard"
-        android:isAsciiCapable="false"
-        android:label="@string/subtype_tr" />
+        android:isAsciiCapable="true"
+        android:label="@string/subtype_en" />
 </input-method>

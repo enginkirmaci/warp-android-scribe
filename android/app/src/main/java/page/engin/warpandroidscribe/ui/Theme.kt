@@ -30,6 +30,8 @@ private val ScribeScheme = darkColorScheme(
     onSurface = ScribeColors.Text,
     surfaceVariant = ScribeColors.Key,
     onSurfaceVariant = ScribeColors.Muted,
+    secondaryContainer = ScribeColors.Green.copy(alpha = 0.18f),
+    onSecondaryContainer = ScribeColors.Green,
     error = ScribeColors.Error,
     onError = Color(0xFF2A0A0A),
     outline = Color(0xFF2A3038),

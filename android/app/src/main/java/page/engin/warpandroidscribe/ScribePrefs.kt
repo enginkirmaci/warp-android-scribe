@@ -31,23 +31,49 @@ class ScribePrefs(context: Context) {
         }
 
     var language: String
-        get() = if (prefs.getString(KEY_LANGUAGE, "tr") == "auto") "auto" else "tr"
+        get() = prefs.getString(KEY_LANGUAGE, DEFAULT_LANGUAGE)
+            ?.takeIf(::isSupportedLanguage)
+            ?: DEFAULT_LANGUAGE
         set(value) {
-            prefs.edit().putString(KEY_LANGUAGE, if (value == "auto") "auto" else "tr").apply()
+            prefs.edit()
+                .putString(KEY_LANGUAGE, if (isSupportedLanguage(value)) value else DEFAULT_LANGUAGE)
+                .apply()
+        }
+
+    var localUrl: String
+        get() = prefs.getString(KEY_LOCAL_URL, null) ?: DEFAULT_LOCAL_URL
+        set(value) {
+            prefs.edit().putString(KEY_LOCAL_URL, value.trim().trimEnd('/')).apply()
+        }
+
+    var remoteUrl: String
+        get() = prefs.getString(KEY_REMOTE_URL, null) ?: DEFAULT_REMOTE_URL
+        set(value) {
+            prefs.edit().putString(KEY_REMOTE_URL, value.trim().trimEnd('/')).apply()
         }
 
     val endpoint: String
         get() = when (mode) {
-            ConnectionMode.LOCAL -> "http://$LOCAL_HOST:$LOCAL_PORT"
-            ConnectionMode.REMOTE -> "https://$REMOTE_HOST"
+            ConnectionMode.LOCAL -> localUrl.trim().trimEnd('/')
+            ConnectionMode.REMOTE -> remoteUrl.trim().trimEnd('/')
         }
 
     val isConfigured: Boolean
-        get() = token.isNotBlank()
+        get() = token.isNotBlank() && endpoint.isNotBlank()
 
     /** A private address needs Android 17's ACCESS_LOCAL_NETWORK; remote does not. */
     val usesLocalNetwork: Boolean
         get() = mode == ConnectionMode.LOCAL
+
+    /** Slash commands shown under the compact top bar; edited in Settings. */
+    val shortcuts: List<String>
+        get() = prefs.getString(KEY_SHORTCUTS, null)
+            ?.split(',', '\n')
+            ?.map { it.trim() }
+            ?.filter { it.isNotEmpty() }
+            ?.distinct()
+            ?.take(MAX_SHORTCUTS)
+            ?: DEFAULT_SHORTCUTS
 
     /** One committed write for the settings screen; `apply()` can be lost
      *  when the activity is backgrounded immediately after the test. */
@@ -55,10 +81,16 @@ class ScribePrefs(context: Context) {
         mode: ConnectionMode,
         token: String,
         language: String,
+        shortcuts: String,
+        localUrl: String,
+        remoteUrl: String,
     ): Boolean = prefs.edit()
         .putString(KEY_MODE, mode.key)
         .putString(KEY_TOKEN, token.trim())
-        .putString(KEY_LANGUAGE, if (language == "auto") "auto" else "tr")
+        .putString(KEY_LANGUAGE, if (isSupportedLanguage(language)) language else DEFAULT_LANGUAGE)
+        .putString(KEY_SHORTCUTS, shortcuts.trim())
+        .putString(KEY_LOCAL_URL, localUrl.trim().trimEnd('/'))
+        .putString(KEY_REMOTE_URL, remoteUrl.trim().trimEnd('/'))
         .commit()
 
     fun addRecentTranscript(text: String) {
@@ -82,15 +114,20 @@ class ScribePrefs(context: Context) {
     }
 
     companion object {
-        const val LOCAL_HOST = "<nas-lan>"
-        const val LOCAL_PORT = 8787
-        const val REMOTE_HOST = "<nas-host>"
+        const val DEFAULT_LOCAL_URL = "http://<nas-lan>:8787"
+        const val DEFAULT_REMOTE_URL = "https://<nas-host>"
+        const val MAX_SHORTCUTS = 8
+
+        val DEFAULT_SHORTCUTS = listOf("/goal", "/compact")
 
         private const val KEY_MODE = "mode"
         private const val KEY_TOKEN = "token"
         private const val KEY_LANGUAGE = "language"
         private const val KEY_TLS_LEGACY = "tls"
         private const val KEY_RECENT = "recent_transcripts"
+        private const val KEY_SHORTCUTS = "shortcuts"
+        private const val KEY_LOCAL_URL = "local_url"
+        private const val KEY_REMOTE_URL = "remote_url"
 
     }
 }

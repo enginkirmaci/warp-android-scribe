@@ -1,6 +1,6 @@
 # warp-android-scribe
 
-A dictation-first Android keyboard with a full Turkish QWERTY layout. Hold (or
+A dictation-first Android keyboard with a full English QWERTY layout. Hold (or
 tap) the green key in the top bar, speak, and the transcript is committed into
 the focused field. Audio goes to a small bridge on <nas-name>, which hands it to
 Superwhisper's S1-Voice model through the `superwhisper` CLI.
@@ -170,35 +170,61 @@ adb shell ime set    com.engin.warpandroidscribe/.ScribeImeService
 
 ### Settings
 
-The launcher activity is the settings screen. It stores the token and the
-Local/Remote choice in the app's private `SharedPreferences` (the token is only
-as protected as the app sandbox; there is no keystore yet) and offers:
+The launcher activity is the settings screen. It stores the mode, the token,
+both server URLs, the dictation language and the shortcuts in the app's private
+`SharedPreferences` (the token is only as protected as the app sandbox; there
+is no keystore yet) and offers:
 
-- **Yerel (LAN)** / **Uzak (Cloudflare)** modes with fixed endpoints
-  (`http://<nas-lan>:8787` and `https://<nas-host>`), one shared
-  token, and a "save and test" button that calls `GET /health`;
+- **Local** / **Remote** modes with editable server URLs. The defaults are the
+  owner's bridge (`http://<nas-lan>:8787` and
+  `https://<nas-host>`), but both fields can be changed; the Remote
+  URL must be HTTPS. One shared token and a **Save & test** button that calls
+  `GET /health`;
 - the Android 17 local-network permission for the Local mode (the remote route
   does not need it);
-- the dictation language: `Türkçe` (default) or `Otomatik`;
+- the dictation language: a drop-down list of supported language codes plus
+  `Auto-detect`; Turkish is the initial default but any listed language can be
+  chosen;
+- a comma-separated list of slash-command shortcuts shown above the compact
+  keyboard;
 - the system input-method settings/picker and the microphone permission.
 
 ### Keyboard
 
-- Full Turkish QWERTY: number row, `q…ü`, `a…i`,
-  shift/`z…ç`/backspace, `?123`, comma, space, period and a blue enter key.
-  The `?123` page carries the symbols and an `ABC` return.
-- The top bar is the dictation surface: a **Local/Remote** chip, the green
-  **Dikte** pill, `TR`/`OTO`, and the clipboard button. A recording replaces the
-  mode chip with a cancel `X`; a quick tap locks the recording, a hold is
-  push-to-talk.
+- The keyboard opens in a compact dictation/prompt layout. The top bar, left
+  to right: the keyboard icon, the current language code (`TR`, `EN`,
+  `AUTO`, …), the green **Dictate** pill, clipboard and delete. The keyboard
+  icon switches to the full QWERTY; long-press opens Settings. Tapping the
+  language code opens the in-keyboard language panel, using the same list as
+  Settings.
+- Under the top bar, the app-configured shortcut row shows slash commands
+  (`/goal`, `/compact` by default). Tapping inserts the command plus a space;
+  edit the comma-separated list in Settings.
+- The compact body: cursor arrows (hold to repeat), space and enter, then
+  icon buttons for `Undo`, `Cut`, `Copy` and `Paste`. Below the icons, the
+  clipboard appears as a single horizontal row of boxes; tap one to insert it.
+  Delete is the top-bar key (hold to repeat); there is no backspace beside the
+  arrows. Vibration is off.
+- The keyboard icon opens the full English QWERTY (number row,
+  `qwertyuiop`, `asdfghjkl`, `zxcvbnm`, shift/backspace, `?123`,
+  space/enter); the same icon returns to the compact surface. The compact
+  layout is the default on every keyboard show; the full switch is temporary.
+- There is no **Local/Remote** chip on the keyboard. The mode lives in
+  Settings, opened by long-pressing the keyboard icon. A recording replaces
+  the keyboard icon with a cancel `X`; a quick tap locks the recording, a hold
+  is push-to-talk.
 - The clipboard button replaces the old keyboard-switch key. It opens a panel
-  over the key area with one grid of cards: text clips, `SON` transcripts and
+  over the key area with one grid of cards: text clips, `RECENT` transcripts and
   image thumbnails together, with no separate sections. Tapping a text clip
   commits it, tapping an image commits it with `InputConnection.commitContent`.
-  "Sistem klavyesi" inside the panel opens the system input-method picker.
+  The expand icon opens the full clipboard view with `ALL`/`TEXT`/`IMAGES`/
+  `RECENT` filters, relative timestamps, long-press actions (`Paste`, `Copy`,
+  `Delete`) and a two-tap `Clear all` (clips only; transcripts stay). Search is
+  not implemented yet. The quick panel's "System keyboard"
+  opens the system input-method picker.
 - There is no chips row and no bottom transcript strip. The last transcripts
-  live in the clipboard panel as `SON` entries. Errors appear as one compact
-  line with "Tekrar" (retry the same WAV) and "Ayarlar".
+  live in the clipboard panel as `RECENT` entries. Errors appear as one compact
+  line with "Retry" (retry the same WAV) and "Settings".
 
 ### Network security
 
@@ -212,17 +238,26 @@ denied or the phone is away from the LAN. The bridge port is `8787` because
 
 ## Decisions
 
-- Language: Turkish by default, with a `TR ↔ OTO` toggle on the keyboard. In a
-  NAS test the same short Turkish sentence came back as English gibberish with
-  `auto`, and correctly with `tr` in ~0.4 s.
-- Layout: full Turkish QWERTY with the dictation/clipboard/mode bar on top;
-  no compact chips row, no bottom transcript strip.
-- Connection: one token, two fixed modes. **Yerel** is
-  `http://<nas-lan>:8787`; **Uzak** is `https://<nas-host>`. The
-  keyboard's mode chip and the settings screen toggle the same preference.
+- Language: Turkish by default, with a selectable list of supported dictation
+  languages and `Auto-detect`. In a NAS test the same short Turkish sentence
+  came back as English gibberish with `auto`, and correctly with `tr` in
+  ~0.4 s; the keyboard label shows the selected code and opens the language
+  panel.
+- Layout: compact dictation/prompt surface by default; the left-hand keyboard
+  icon opens the full English QWERTY and returns. The top bar is keyboard
+  icon, language, Dictate, clipboard, delete. Slash-command shortcuts come
+  from Settings.
+  No mode chip, no fixed starter row, vibration off, no bottom transcript
+  strip.
+- Connection: one token, two modes with editable URLs. The initial Local URL is
+  `http://<nas-lan>:8787`, the initial Remote URL is
+  `https://<nas-host>`; both are stored in Settings. The keyboard
+  shows no mode chip. The UI is English and the mode is called **Remote**, not
+  Cloudflare.
 - Clipboard: text and images. Images are copied into the app cache and shared
   through a `FileProvider`; insertion uses `InputConnection.commitContent`, so
-  fields that do not accept content show a clear error.
+  fields that do not accept content show a clear error. The quick grid expands
+  to a filterable full view; history is session-only.
 - Package: `com.engin.warpandroidscribe`; minSdk 26, targetSdk 37.
 - License: the NAS profile currently runs on Superwhisper's free 10 000-word
   cloud quota (`license status` says `unlicensed`). File transcription works;
@@ -248,6 +283,19 @@ denied or the phone is away from the LAN. The bridge port is `8787` because
   shows a clear error and the Remote mode is the way to continue.
 - Clipboard images only paste into fields that implement `commitContent`; a
   chat composer usually does, a plain text field does not.
+- Mode is only in Settings now; long-press the keyboard icon. The compact
+  layout is restored on every keyboard show; the full layout is not remembered.
+- Undo/cut/paste are best-effort: `performContextMenuAction` first, then
+  Ctrl+Z/X; editors that support neither simply ignore them.
+- The full clipboard view has filters but no search. Searching an IME-internal
+  list needs the full QWERTY routed into the IME's own query instead of the
+  app's input connection; that is a separate v2 change.
+- Clipboard history is session-only. After the process dies, only the current
+  system clip and the recent `RECENT` transcripts come back; image cache files
+  expire after 24 hours.
+- Slash-command shortcuts only insert text into the focused field; they do not
+  call the harness API. A command that needs a running harness still depends on
+  the app receiving the text.
 - The system keyboard bar (switch/hide) is Android's, not part of the
   keyboard. The app measures the IME window against the display and pads the
   keys and the panel by the navigation-bar height, so nothing is hidden under

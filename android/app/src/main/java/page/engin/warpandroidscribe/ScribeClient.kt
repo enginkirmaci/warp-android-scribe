@@ -32,7 +32,7 @@ class ScribeClient(private val prefs: ScribePrefs) {
             val payload = response.body.string()
             if (!response.isSuccessful) throw failure(response.code, payload)
             val json = runCatching { JSONObject(payload) }
-                .getOrElse { throw ScribeException("Sunucu JSON döndürmedi.") }
+                .getOrElse { throw ScribeException("The server did not return JSON.") }
             return Result(
                 text = json.optString("text"),
                 language = json.optString("language", language),
@@ -56,11 +56,11 @@ class ScribeClient(private val prefs: ScribePrefs) {
     private fun failure(code: Int, payload: String): ScribeException {
         val detail = runCatching { JSONObject(payload).optString("error") }.getOrDefault("")
         val message = when (code) {
-            401 -> "Sunucu token'ı reddetti (401)."
-            413 -> "Ses çok uzun veya büyük (413)."
-            502 -> "Sunucu Superwhisper'a ulaşamadı (502)."
-            504 -> "Sunucu zaman aşımına uğradı (504)."
-            else -> "Sunucu hatası ($code)."
+            401 -> "The server rejected the token (401)."
+            413 -> "The audio is too long or too large (413)."
+            502 -> "The server could not reach Superwhisper (502)."
+            504 -> "The server timed out (504)."
+            else -> "Server error ($code)."
         }
         return ScribeException(if (detail.isBlank()) message else "$message $detail")
     }

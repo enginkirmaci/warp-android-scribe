@@ -6,6 +6,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -20,6 +21,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -28,7 +30,9 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -44,6 +48,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.TextUnit
@@ -51,13 +57,20 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.io.File
 import java.util.Locale
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import com.engin.warpandroidscribe.ClipKind
 import com.engin.warpandroidscribe.ClipboardEntry
-import com.engin.warpandroidscribe.ConnectionMode
+import com.engin.warpandroidscribe.ClipboardView
+import com.engin.warpandroidscribe.KeyboardMode
 import com.engin.warpandroidscribe.Phase
 import com.engin.warpandroidscribe.R
 import com.engin.warpandroidscribe.ScribeActions
 import com.engin.warpandroidscribe.ScribeUiState
+import com.engin.warpandroidscribe.SUPPORTED_LANGUAGES
+import com.engin.warpandroidscribe.languageShort
 
 @Composable
 fun ScribeKeyboard(state: ScribeUiState, actions: ScribeActions) {
@@ -74,18 +87,29 @@ fun ScribeKeyboard(state: ScribeUiState, actions: ScribeActions) {
             .background(ScribeColors.Background)
             .padding(start = 6.dp, end = 6.dp, top = 6.dp, bottom = bottomPadding),
     ) {
-        TopBar(state, actions)
-        if (state.showClipboard) {
-            ClipboardPanel(state, actions)
+        if (state.clipboardView == ClipboardView.FULL) {
+            ClipboardFullView(state, actions)
         } else {
-            state.error?.let { ErrorLine(state, actions) }
-            KeyboardBody(state, actions)
+            TopBar(state, actions)
+            when {
+                state.showLanguages -> LanguagePanel(state, actions)
+                state.clipboardView == ClipboardView.QUICK -> ClipboardPanel(state, actions)
+                else -> {
+                    state.error?.let { ErrorLine(state, actions) }
+                    if (state.layout == KeyboardMode.COMPACT) {
+                        CompactBody(state, actions)
+                    } else {
+                        KeyboardBody(state, actions)
+                    }
+                }
+            }
         }
     }
 }
 
 @Composable
 private fun TopBar(state: ScribeUiState, actions: ScribeActions) {
+    val keysEnabled = state.phase == Phase.IDLE || state.phase == Phase.ERROR
     Row(
         modifier = Modifier.fillMaxWidth().height(42.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -99,65 +123,159 @@ private fun TopBar(state: ScribeUiState, actions: ScribeActions) {
             ) {
                 Icon(
                     painter = painterResource(R.drawable.ic_close),
-                    contentDescription = "İptal",
+                    contentDescription = "Cancel",
                     tint = ScribeColors.Error,
                     modifier = Modifier.size(18.dp),
                 )
             }
         } else {
-            ModeChip(state.mode, actions.onToggleMode)
+            LayoutButton(state.layout, actions.onToggleLayout, actions.onSettings)
         }
-        DictatePill(state, actions, Modifier.weight(1f).fillMaxHeight())
         KeyBox(
-            modifier = Modifier.width(48.dp).fillMaxHeight(),
+            modifier = Modifier.width(46.dp).fillMaxHeight(),
             shape = RoundedCornerShape(21.dp),
             onClick = actions.onToggleLanguage,
         ) {
             Text(
-                text = if (state.language == "auto") "OTO" else "TR",
+                text = languageShort(state.language),
                 color = ScribeColors.Text,
-                fontSize = 12.sp,
+                fontSize = if (state.language == "auto") 10.sp else 12.sp,
                 fontWeight = FontWeight.SemiBold,
+                letterSpacing = 0.3.sp,
             )
         }
+        DictatePill(state, actions, Modifier.weight(1f).fillMaxHeight())
         KeyBox(
-            modifier = Modifier.width(48.dp).fillMaxHeight(),
+            modifier = Modifier.width(44.dp).fillMaxHeight(),
             shape = RoundedCornerShape(21.dp),
             onClick = actions.onToggleClipboard,
         ) {
             Icon(
                 painter = painterResource(R.drawable.ic_clipboard),
-                contentDescription = "Pano",
-                tint = if (state.showClipboard) ScribeColors.Green else ScribeColors.Text,
+                contentDescription = "Clipboard",
+                tint = if (state.clipboardView != ClipboardView.HIDDEN) {
+                    ScribeColors.Green
+                } else {
+                    ScribeColors.Text
+                },
                 modifier = Modifier.size(20.dp),
             )
+        }
+        RepeatKey(
+            modifier = Modifier.width(46.dp).fillMaxHeight(),
+            enabled = keysEnabled,
+            label = "Delete",
+            shape = RoundedCornerShape(21.dp),
+            onRepeat = actions.onBackspace,
+        ) {
+            Text("⌫", color = ScribeColors.Text, fontSize = 18.sp)
         }
     }
 }
 
 @Composable
-private fun ModeChip(mode: ConnectionMode, onClick: () -> Unit) {
-    KeyBox(
-        modifier = Modifier.width(66.dp).fillMaxHeight(),
-        shape = RoundedCornerShape(21.dp),
-        onClick = onClick,
+private fun LayoutButton(
+    layout: KeyboardMode,
+    onToggle: () -> Unit,
+    onLongClick: () -> Unit,
+) {
+    val full = layout == KeyboardMode.FULL
+    Box(
+        modifier = Modifier
+            .width(42.dp)
+            .fillMaxHeight()
+            .clip(RoundedCornerShape(21.dp))
+            .background(ScribeColors.Key)
+            .combinedClickable(
+                onClick = onToggle,
+                onLongClick = onLongClick,
+            ),
+        contentAlignment = Alignment.Center,
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                Modifier
-                    .size(6.dp)
-                    .clip(CircleShape)
-                    .background(if (mode == ConnectionMode.LOCAL) ScribeColors.Green else ScribeColors.Blue),
-            )
-            Spacer(Modifier.width(5.dp))
+        Icon(
+            painter = painterResource(
+                if (full) R.drawable.ic_keyboard_hide else R.drawable.ic_keyboard,
+            ),
+            contentDescription = if (full) "Back to compact" else "Open full keyboard",
+            tint = ScribeColors.Text,
+            modifier = Modifier.size(20.dp),
+        )
+    }
+}
+
+@Composable
+private fun LanguagePanel(state: ScribeUiState, actions: ScribeActions) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(300.dp)
+            .padding(top = 6.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().height(28.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Text(
-                text = mode.label,
+                "LANGUAGE",
                 color = ScribeColors.Muted,
-                fontSize = 9.sp,
+                fontSize = 10.sp,
                 fontWeight = FontWeight.Medium,
-                letterSpacing = 0.4.sp,
+                letterSpacing = 0.8.sp,
             )
+            Spacer(Modifier.weight(1f))
+            SmallAction("Close", actions.onToggleLanguage, ScribeColors.Text)
         }
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            SUPPORTED_LANGUAGES.chunked(2).forEach { rowLanguages ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    rowLanguages.forEach { language ->
+                        LanguageButton(
+                            name = language.name,
+                            selected = state.language == language.code,
+                            modifier = Modifier.weight(1f),
+                            onClick = { actions.onSelectLanguage(language.code) },
+                        )
+                    }
+                    if (rowLanguages.size == 1) {
+                        Spacer(Modifier.weight(1f))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LanguageButton(
+    name: String,
+    selected: Boolean,
+    modifier: Modifier,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = modifier
+            .height(40.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (selected) ScribeColors.Green else ScribeColors.Key)
+            .combinedClickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = name,
+            color = if (selected) ScribeColors.Background else ScribeColors.Text,
+            fontSize = 11.sp,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            maxLines = 1,
+        )
     }
 }
 
@@ -166,10 +284,10 @@ private fun DictatePill(state: ScribeUiState, actions: ScribeActions, modifier: 
     val recording = state.phase == Phase.RECORDING
     val processing = state.phase == Phase.TRANSCRIBING
     val label = when {
-        processing -> "İşleniyor…"
-        recording && state.locked -> "Durdur"
-        recording -> "Bırak ${formatElapsed(state.elapsedSecs)}"
-        else -> "Dikte"
+        processing -> "Processing…"
+        recording && state.locked -> "Stop"
+        recording -> "Release ${formatElapsed(state.elapsedSecs)}"
+        else -> "Dictate"
     }
     val brush = when {
         recording -> Brush.horizontalGradient(
@@ -257,9 +375,9 @@ private fun ErrorLine(state: ScribeUiState, actions: ScribeActions) {
             modifier = Modifier.weight(1f),
         )
         if (state.canRetry) {
-            SmallAction("Tekrar", actions.onRetry, ScribeColors.Text)
+            SmallAction("Retry", actions.onRetry, ScribeColors.Text)
         }
-        SmallAction("Ayarlar", actions.onSettings, ScribeColors.Muted)
+        SmallAction("Settings", actions.onSettings, ScribeColors.Muted)
         Box(
             modifier = Modifier
                 .size(26.dp)
@@ -269,7 +387,7 @@ private fun ErrorLine(state: ScribeUiState, actions: ScribeActions) {
         ) {
             Icon(
                 painter = painterResource(R.drawable.ic_close),
-                contentDescription = "Kapat",
+                contentDescription = "Close",
                 tint = ScribeColors.Muted,
                 modifier = Modifier.size(13.dp),
             )
@@ -287,6 +405,229 @@ private fun SmallAction(label: String, onClick: () -> Unit, color: Color) {
         contentAlignment = Alignment.Center,
     ) {
         Text(label, color = color, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+    }
+}
+
+@Composable
+private fun CompactBody(state: ScribeUiState, actions: ScribeActions) {
+    val enabled = state.phase == Phase.IDLE || state.phase == Phase.ERROR
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 5.dp)
+            .alpha(if (enabled) 1f else 0.45f),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        if (state.shortcuts.isNotEmpty()) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .height(32.dp)
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(5.dp),
+            ) {
+                for (shortcut in state.shortcuts) {
+                    ShortcutChip(shortcut, enabled) {
+                        actions.onText(
+                            if (shortcut.endsWith(" ")) shortcut else "$shortcut ",
+                        )
+                    }
+                }
+            }
+        }
+        Row(
+            Modifier.fillMaxWidth().height(44.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            RepeatKey(
+                modifier = Modifier.width(44.dp).fillMaxHeight(),
+                enabled = enabled,
+                label = "Move cursor left",
+                onRepeat = { actions.onMoveCursor(-1) },
+            ) {
+                Text("←", color = ScribeColors.Text, fontSize = 18.sp)
+            }
+            RepeatKey(
+                modifier = Modifier.width(44.dp).fillMaxHeight(),
+                enabled = enabled,
+                label = "Move cursor right",
+                onRepeat = { actions.onMoveCursor(1) },
+            ) {
+                Text("→", color = ScribeColors.Text, fontSize = 18.sp)
+            }
+            Key(
+                "space",
+                Modifier.weight(1f).fillMaxHeight(),
+                enabled,
+                fontSize = 11.sp,
+                textColor = ScribeColors.Muted,
+            ) { actions.onText(" ") }
+            KeyBox(
+                modifier = Modifier.width(54.dp).fillMaxHeight(),
+                enabled = enabled,
+                background = ScribeColors.Blue,
+                onClick = actions.onEnter,
+            ) {
+                Text("↵", color = ScribeColors.Background, fontSize = 20.sp)
+            }
+        }
+        Row(
+            Modifier.fillMaxWidth().height(38.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            EditorIcon(R.drawable.ic_undo, "Undo", enabled, Modifier.weight(1f)) {
+                actions.onUndo()
+            }
+            EditorIcon(R.drawable.ic_cut, "Cut", enabled, Modifier.weight(1f)) {
+                actions.onCut()
+            }
+            EditorIcon(R.drawable.ic_copy, "Copy", enabled, Modifier.weight(1f)) {
+                actions.onCopy()
+            }
+            EditorIcon(R.drawable.ic_paste, "Paste", enabled, Modifier.weight(1f)) {
+                actions.onPaste()
+            }
+        }
+        ClipboardStrip(state, actions)
+    }
+}
+
+@Composable
+private fun EditorIcon(
+    icon: Int,
+    label: String,
+    enabled: Boolean,
+    modifier: Modifier,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = modifier
+            .fillMaxHeight()
+            .clip(RoundedCornerShape(8.dp))
+            .background(ScribeColors.Key)
+            .combinedClickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            painter = painterResource(icon),
+            contentDescription = label,
+            tint = ScribeColors.Text,
+            modifier = Modifier.size(19.dp),
+        )
+    }
+}
+
+@Composable
+private fun ClipboardStrip(state: ScribeUiState, actions: ScribeActions) {
+    val entries = state.clipboard
+    if (entries.isEmpty()) return
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(44.dp)
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        for (entry in entries) {
+            key(entry.id) {
+                when (entry.kind) {
+                ClipKind.IMAGE -> {
+                    val bitmap = remember(entry.file) { loadThumbnail(entry.file) }
+                    Box(
+                        modifier = Modifier
+                            .width(66.dp)
+                            .height(40.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(ScribeColors.Key)
+                            .combinedClickable { actions.onInsertEntry(entry) },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (bitmap != null) {
+                            Image(
+                                bitmap = bitmap.asImageBitmap(),
+                                contentDescription = "Clipboard image",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        } else {
+                            Text("IMAGE", color = ScribeColors.Muted, fontSize = 8.sp)
+                        }
+                    }
+                }
+                else -> {
+                    Box(
+                        modifier = Modifier
+                            .widthIn(min = 96.dp, max = 180.dp)
+                            .height(40.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(ScribeColors.Key)
+                            .combinedClickable { actions.onInsertEntry(entry) }
+                            .padding(horizontal = 9.dp, vertical = 5.dp),
+                        contentAlignment = Alignment.CenterStart,
+                    ) {
+                        Text(
+                            text = entry.text.replace('\n', ' '),
+                            color = ScribeColors.Text,
+                            fontSize = 10.sp,
+                            lineHeight = 12.sp,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ShortcutChip(
+    label: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxHeight()
+            .clip(RoundedCornerShape(8.dp))
+            .background(ScribeColors.Key)
+            .combinedClickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 12.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = label,
+            color = ScribeColors.Text,
+            fontSize = 10.sp,
+            maxLines = 1,
+        )
+    }
+}
+
+@Composable
+private fun CompactChip(
+    label: String,
+    modifier: Modifier,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    fontSize: TextUnit = 10.sp,
+) {
+    Box(
+        modifier = modifier
+            .fillMaxHeight()
+            .clip(RoundedCornerShape(8.dp))
+            .background(ScribeColors.Key)
+            .combinedClickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = label,
+            color = ScribeColors.Text,
+            fontSize = fontSize,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -313,10 +654,10 @@ private fun KeyboardBody(state: ScribeUiState, actions: ScribeActions) {
                     }
                 }
             }
-            LetterRow("qwertyuıopğü", actions, enabled) { ch ->
+            LetterRow("qwertyuiop", actions, enabled) { ch ->
                 actions.onText(letter(ch, shiftOn) { shiftOn = false })
             }
-            LetterRow("asdfghjklşi", actions, enabled) { ch ->
+            LetterRow("asdfghjkl", actions, enabled) { ch ->
                 actions.onText(letter(ch, shiftOn) { shiftOn = false })
             }
             Row(Modifier.fillMaxWidth().height(44.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -332,15 +673,16 @@ private fun KeyboardBody(state: ScribeUiState, actions: ScribeActions) {
                         fontSize = 19.sp,
                     )
                 }
-                for (key in "zxcvbnmöç") {
+                for (key in "zxcvbnm") {
                     Key(key.toString(), Modifier.weight(1f).fillMaxHeight(), enabled) {
                         actions.onText(letter(key, shiftOn) { shiftOn = false })
                     }
                 }
-                KeyBox(
+                RepeatKey(
                     modifier = Modifier.width(48.dp).fillMaxHeight(),
                     enabled = enabled,
-                    onClick = actions.onBackspace,
+                    label = "Delete",
+                    onRepeat = actions.onBackspace,
                 ) {
                     Text("⌫", color = ScribeColors.Text, fontSize = 18.sp)
                 }
@@ -390,7 +732,7 @@ private fun BottomRow(
         }
         Key(",", Modifier.width(34.dp).fillMaxHeight(), enabled) { onText(",") }
         Key(
-            "boşluk",
+            "space",
             Modifier.weight(1f).fillMaxHeight(),
             enabled,
             fontSize = 11.sp,
@@ -433,16 +775,17 @@ private fun SymbolRows(actions: ScribeActions, enabled: Boolean, onAbc: () -> Un
             Text("ABC", color = ScribeColors.Text, fontSize = 12.sp)
         }
         Key(
-            "boşluk",
+            "space",
             Modifier.weight(1f).fillMaxHeight(),
             enabled,
             fontSize = 11.sp,
             textColor = ScribeColors.Muted,
         ) { actions.onText(" ") }
-        KeyBox(
+        RepeatKey(
             modifier = Modifier.width(54.dp).fillMaxHeight(),
             enabled = enabled,
-            onClick = actions.onBackspace,
+            label = "Delete",
+            onRepeat = actions.onBackspace,
         ) {
             Text("⌫", color = ScribeColors.Text, fontSize = 18.sp)
         }
@@ -472,14 +815,28 @@ private fun ClipboardPanel(state: ScribeUiState, actions: ScribeActions) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                "PANO",
+                "CLIPBOARD",
                 color = ScribeColors.Muted,
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Medium,
                 letterSpacing = 0.8.sp,
             )
             Spacer(Modifier.weight(1f))
-            SmallAction("Sistem klavyesi", actions.onSwitchKeyboard, ScribeColors.Text)
+            Box(
+                modifier = Modifier
+                    .size(28.dp)
+                    .clip(CircleShape)
+                    .combinedClickable(onClick = actions.onExpandClipboard),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_expand),
+                    contentDescription = "Open full clipboard",
+                    tint = ScribeColors.Text,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+            SmallAction("System keyboard", actions.onSwitchKeyboard, ScribeColors.Text)
             Box(
                 modifier = Modifier
                     .size(28.dp)
@@ -489,7 +846,7 @@ private fun ClipboardPanel(state: ScribeUiState, actions: ScribeActions) {
             ) {
                 Icon(
                     painter = painterResource(R.drawable.ic_close),
-                    contentDescription = "Kapat",
+                    contentDescription = "Close",
                     tint = ScribeColors.Muted,
                     modifier = Modifier.size(14.dp),
                 )
@@ -497,7 +854,7 @@ private fun ClipboardPanel(state: ScribeUiState, actions: ScribeActions) {
         }
         if (entries.isEmpty()) {
             Text(
-                "Pano boş. Bir metin veya görsel kopyala.",
+                "Clipboard is empty. Copy some text or an image.",
                 color = ScribeColors.Muted,
                 fontSize = 11.sp,
                 modifier = Modifier.padding(vertical = 12.dp),
@@ -530,25 +887,30 @@ private fun ClipCard(
     entry: ClipboardEntry,
     onClick: (ClipboardEntry) -> Unit,
     modifier: Modifier = Modifier,
+    showMeta: Boolean = false,
+    onLongClick: (() -> Unit)? = null,
 ) {
     Box(
         modifier = modifier
-            .height(92.dp)
+            .height(96.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(ScribeColors.Key)
-            .combinedClickable(onClick = { onClick(entry) }),
+            .combinedClickable(
+                onClick = { onClick(entry) },
+                onLongClick = onLongClick,
+            ),
     ) {
         when (entry.kind) {
             ClipKind.IMAGE -> {
                 val bitmap = remember(entry.file) { loadThumbnail(entry.file) }
                 if (bitmap == null) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("GÖRSEL", color = ScribeColors.Muted, fontSize = 9.sp)
+                        Text("IMAGE", color = ScribeColors.Muted, fontSize = 9.sp)
                     }
                 } else {
                     Image(
                         bitmap = bitmap.asImageBitmap(),
-                        contentDescription = "Pano görseli",
+                        contentDescription = "Clipboard image",
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize(),
                     )
@@ -556,14 +918,27 @@ private fun ClipCard(
             }
             ClipKind.TEXT, ClipKind.TRANSCRIPT -> {
                 Column(Modifier.fillMaxSize().padding(horizontal = 9.dp, vertical = 8.dp)) {
-                    Text(
-                        text = entry.label.ifBlank { "PANO" },
-                        color = ScribeColors.Muted,
-                        fontSize = 8.sp,
-                        letterSpacing = 0.6.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = entry.label.ifBlank { "CLIPBOARD" },
+                            color = ScribeColors.Muted,
+                            fontSize = 8.sp,
+                            letterSpacing = 0.6.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (showMeta) {
+                            relativeTime(entry.createdAt)?.let { age ->
+                                Text(
+                                    text = " · $age",
+                                    color = ScribeColors.Muted,
+                                    fontSize = 8.sp,
+                                    maxLines = 1,
+                                )
+                            }
+                        }
+                    }
                     Spacer(Modifier.height(3.dp))
                     Text(
                         text = entry.text.replace('\n', ' '),
@@ -576,7 +951,291 @@ private fun ClipCard(
                 }
             }
         }
+        if (showMeta && entry.kind == ClipKind.IMAGE) {
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(6.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(Color.Black.copy(alpha = 0.55f))
+                    .padding(horizontal = 5.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = entry.label.ifBlank { "IMAGE" },
+                    color = Color.White,
+                    fontSize = 7.sp,
+                )
+                relativeTime(entry.createdAt)?.let { age ->
+                    Text(
+                        text = " · $age",
+                        color = Color.White.copy(alpha = 0.8f),
+                        fontSize = 7.sp,
+                    )
+                }
+            }
+        }
     }
+}
+
+private enum class ClipFilter(val label: String) {
+    ALL("ALL"),
+    TEXT("TEXT"),
+    IMAGE("IMAGES"),
+    VOICE("RECENT"),
+}
+
+@Composable
+private fun ClipboardFullView(state: ScribeUiState, actions: ScribeActions) {
+    var filter by remember { mutableStateOf(ClipFilter.ALL) }
+    var selected by remember { mutableStateOf<ClipboardEntry?>(null) }
+    var confirmClear by remember { mutableStateOf(false) }
+    val entries = state.clipboard.filter { entry ->
+        when (filter) {
+            ClipFilter.ALL -> true
+            ClipFilter.TEXT -> entry.kind == ClipKind.TEXT
+            ClipFilter.IMAGE -> entry.kind == ClipKind.IMAGE
+            ClipFilter.VOICE -> entry.kind == ClipKind.TRANSCRIPT
+        }
+    }
+
+    LaunchedEffect(state.clipboard) {
+        val current = selected ?: return@LaunchedEffect
+        if (state.clipboard.none { it.id == current.id }) selected = null
+    }
+
+    Column(Modifier.fillMaxWidth().height(420.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth().height(34.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(30.dp)
+                    .clip(CircleShape)
+                    .combinedClickable(onClick = actions.onCloseClipboard),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("←", color = ScribeColors.Text, fontSize = 18.sp)
+            }
+            Spacer(Modifier.width(6.dp))
+            Text(
+                "CLIPBOARD",
+                color = ScribeColors.Muted,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Medium,
+                letterSpacing = 0.8.sp,
+            )
+            Spacer(Modifier.weight(1f))
+            Box(
+                modifier = Modifier
+                    .size(28.dp)
+                    .clip(CircleShape)
+                    .combinedClickable(onClick = actions.onCloseClipboard),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_close),
+                    contentDescription = "Close",
+                    tint = ScribeColors.Muted,
+                    modifier = Modifier.size(14.dp),
+                )
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth().height(30.dp),
+            horizontalArrangement = Arrangement.spacedBy(5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            for (value in ClipFilter.values()) {
+                FilterButton(value, filter == value) { filter = value }
+            }
+        }
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .verticalScroll(rememberScrollState()),
+        ) {
+            if (entries.isEmpty()) {
+                Text(
+                    "Clipboard is empty. Copy some text or an image.",
+                    color = ScribeColors.Muted,
+                    fontSize = 11.sp,
+                    modifier = Modifier.padding(vertical = 12.dp),
+                )
+            } else {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    entries.chunked(2).forEach { rowEntries ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            rowEntries.forEach { entry ->
+                                ClipCard(
+                                    entry = entry,
+                                    onClick = actions.onInsertEntry,
+                                    modifier = Modifier.weight(1f),
+                                    showMeta = true,
+                                    onLongClick = { selected = entry },
+                                )
+                            }
+                            if (rowEntries.size == 1) {
+                                Spacer(Modifier.weight(1f))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        selected?.let { entry ->
+            Row(
+                modifier = Modifier.fillMaxWidth().height(36.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                CompactChip(
+                    label = "Paste",
+                    modifier = Modifier.weight(1f),
+                    enabled = true,
+                    onClick = {
+                        selected = null
+                        actions.onInsertEntry(entry)
+                    },
+                )
+                if (entry.kind != ClipKind.IMAGE) {
+                    CompactChip(
+                        label = "Copy",
+                        modifier = Modifier.weight(1f),
+                        enabled = true,
+                        onClick = {
+                            actions.onCopyEntry(entry)
+                            selected = null
+                        },
+                    )
+                }
+                CompactChip(
+                    label = "Delete",
+                    modifier = Modifier.weight(1f),
+                    enabled = true,
+                    onClick = {
+                        actions.onDeleteEntry(entry)
+                        selected = null
+                        confirmClear = false
+                    },
+                )
+                CompactChip(
+                    label = "Cancel",
+                    modifier = Modifier.weight(1f),
+                    enabled = true,
+                    onClick = { selected = null },
+                )
+            }
+        }
+        if (entries.isNotEmpty()) {
+            Row(
+                modifier = Modifier.fillMaxWidth().height(32.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                SmallAction(
+                    label = if (confirmClear) "Are you sure?" else "Clear all",
+                    onClick = {
+                        if (confirmClear) {
+                            actions.onClearClips()
+                            confirmClear = false
+                        } else {
+                            confirmClear = true
+                        }
+                    },
+                    color = if (confirmClear) ScribeColors.Error else ScribeColors.Muted,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FilterButton(
+    filter: ClipFilter,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(9.dp))
+            .background(if (selected) ScribeColors.Green else ScribeColors.Key)
+            .combinedClickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 5.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = filter.label,
+            color = if (selected) ScribeColors.Background else ScribeColors.Muted,
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Medium,
+            letterSpacing = 0.4.sp,
+        )
+    }
+}
+
+private fun relativeTime(createdAt: Long): String? {
+    if (createdAt <= 0L) return null
+    val diff = (System.currentTimeMillis() - createdAt).coerceAtLeast(0L)
+    return when {
+        diff < 60_000L -> "just now"
+        diff < 3_600_000L -> "${diff / 60_000L}m"
+        diff < 86_400_000L -> "${diff / 3_600_000L}h"
+        else -> "${diff / 86_400_000L}d"
+    }
+}
+
+@Composable
+private fun RepeatKey(
+    modifier: Modifier,
+    enabled: Boolean = true,
+    label: String,
+    shape: Shape = RoundedCornerShape(8.dp),
+    onRepeat: () -> Unit,
+    content: @Composable BoxScope.() -> Unit,
+) {
+    Box(
+        modifier = modifier
+            .clip(shape)
+            .background(ScribeColors.Key)
+            .semantics {
+                onClick(label = label) {
+                    if (enabled) {
+                        onRepeat()
+                        true
+                    } else {
+                        false
+                    }
+                }
+            }
+            .pointerInput(enabled) {
+                if (!enabled) return@pointerInput
+                detectTapGestures(
+                    onPress = {
+                        onRepeat()
+                        coroutineScope {
+                            val repeatJob = launch {
+                                delay(350)
+                                while (isActive) {
+                                    onRepeat()
+                                    delay(60)
+                                }
+                            }
+                            tryAwaitRelease()
+                            repeatJob.cancel()
+                        }
+                    },
+                )
+            },
+        contentAlignment = Alignment.Center,
+        content = content,
+    )
 }
 
 @Composable
@@ -617,11 +1276,7 @@ private fun letter(ch: Char, shiftOn: Boolean, resetShift: () -> Unit): String {
     return if (shiftOn) upper(ch) else ch.toString()
 }
 
-private fun upper(ch: Char): String = when (ch) {
-    'i' -> "İ"
-    'ı' -> "I"
-    else -> ch.uppercaseChar().toString()
-}
+private fun upper(ch: Char): String = ch.uppercaseChar().toString()
 
 private fun formatElapsed(seconds: Int): String =
     String.format(Locale.US, "%d:%02d", seconds / 60, seconds % 60)

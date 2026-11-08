@@ -37,7 +37,7 @@ class WavRecorder(private val file: File) {
             AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT,
         )
-        if (minBuffer <= 0) throw IOException("AudioRecord buffer hesaplanamadı.")
+        if (minBuffer <= 0) throw IOException("Could not calculate the AudioRecord buffer.")
         val record = AudioRecord(
             MediaRecorder.AudioSource.VOICE_RECOGNITION,
             SAMPLE_RATE,
@@ -47,7 +47,7 @@ class WavRecorder(private val file: File) {
         )
         if (record.state != AudioRecord.STATE_INITIALIZED) {
             record.release()
-            throw IOException("AudioRecord başlatılamadı.")
+            throw IOException("Could not start AudioRecord.")
         }
         file.parentFile?.mkdirs()
         record.startRecording()
