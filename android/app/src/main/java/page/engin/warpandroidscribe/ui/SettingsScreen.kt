@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.provider.Settings
 import android.view.inputmethod.InputMethodManager
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -11,6 +12,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -26,6 +28,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -36,6 +39,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -62,10 +66,12 @@ fun SettingsScreen() {
     var port by rememberSaveable { mutableStateOf(prefs.port.toString()) }
     var token by rememberSaveable { mutableStateOf(prefs.token) }
     var language by rememberSaveable { mutableStateOf(prefs.language) }
+    var secure by rememberSaveable { mutableStateOf(prefs.tls) }
     var message by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var imeStatus by remember { mutableStateOf(describeIme(context)) }
     var micGranted by remember { mutableStateOf(hasMicrophone(context)) }
+    var localGranted by remember { mutableStateOf(hasLocalNetwork(context)) }
 
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -73,6 +79,7 @@ fun SettingsScreen() {
             if (event == Lifecycle.Event.ON_RESUME) {
                 imeStatus = describeIme(context)
                 micGranted = hasMicrophone(context)
+                localGranted = hasLocalNetwork(context)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -85,6 +92,12 @@ fun SettingsScreen() {
         micGranted = granted
         message = if (granted) "Mikrofon izni verildi." else "Mikrofon izni reddedildi."
     }
+    val localPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        localGranted = granted
+        message = if (granted) "Yerel ağ izni verildi." else "Yerel ağ izni reddedildi."
+    }
 
     fun save(): Boolean {
         val parsedPort = port.toIntOrNull()
@@ -92,10 +105,10 @@ fun SettingsScreen() {
             message = "Host, port ve token zorunlu."
             return false
         }
-        prefs.host = host
-        prefs.port = parsedPort
-        prefs.token = token
-        prefs.language = language
+        if (!prefs.saveConnection(host, parsedPort, token, language, secure)) {
+            message = "Ayarlar kaydedilemedi."
+            return false
+        }
         return true
     }
 
@@ -163,11 +176,48 @@ fun SettingsScreen() {
                 modifier = Modifier.weight(2f),
             )
         }
-        if (host.trim() != ScribePrefs.DEFAULT_HOST) {
+        Spacer(Modifier.height(8.dp))
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("HTTPS", color = ScribeColors.Text, fontSize = 12.sp)
+            Switch(checked = secure, onCheckedChange = { secure = it })
+            Spacer(Modifier.weight(1f))
+            OutlinedButton(
+                onClick = {
+                    host = ScribePrefs.DEFAULT_HOST
+                    port = ScribePrefs.DEFAULT_PORT.toString()
+                    secure = false
+                },
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                modifier = Modifier.height(34.dp),
+            ) {
+                Text("LAN", fontSize = 11.sp)
+            }
+            OutlinedButton(
+                onClick = {
+                    host = ScribePrefs.PUBLIC_HOST
+                    port = ScribePrefs.PUBLIC_PORT.toString()
+                    secure = true
+                },
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                modifier = Modifier.height(34.dp),
+            ) {
+                Text("Cloudflare", fontSize = 11.sp)
+            }
+        }
+        Text(
+            text = "LAN: http://${ScribePrefs.DEFAULT_HOST}:${ScribePrefs.DEFAULT_PORT}  ·  " +
+                "Cloudflare: https://${ScribePrefs.PUBLIC_HOST}",
+            color = ScribeColors.Muted,
+            fontSize = 11.sp,
+        )
+        if (!secure && host.trim() != ScribePrefs.DEFAULT_HOST) {
             Spacer(Modifier.height(6.dp))
             Text(
                 text = "Uyarı: düz HTTP yalnızca ${ScribePrefs.DEFAULT_HOST} için açık. " +
-                    "Başka bir host için HTTPS gerekir.",
+                    "Başka bir host için HTTPS'i aç.",
                 color = ScribeColors.Error,
                 fontSize = 11.sp,
             )
@@ -250,6 +300,34 @@ fun SettingsScreen() {
         }
 
         Spacer(Modifier.height(22.dp))
+        SectionLabel("YEREL AĞ")
+        val localOk = Build.VERSION.SDK_INT < 37 || localGranted
+        Text(
+            text = when {
+                Build.VERSION.SDK_INT < 37 -> "Android 16 ve altında gerekmez."
+                localOk -> "İzin verildi."
+                else -> "LAN için izin gerekli; Cloudflare seçilirse gerekmez."
+            },
+            color = if (localOk) ScribeColors.Text else ScribeColors.Error,
+            fontSize = 13.sp,
+        )
+        if (Build.VERSION.SDK_INT >= 37) {
+            Spacer(Modifier.height(8.dp))
+            Button(
+                onClick = {
+                    if (localOk) {
+                        message = "Yerel ağ izni zaten verilmiş."
+                    } else {
+                        localPermission.launch(Manifest.permission.ACCESS_LOCAL_NETWORK)
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().height(46.dp),
+            ) {
+                Text("Yerel ağ izni ver")
+            }
+        }
+
+        Spacer(Modifier.height(22.dp))
         SectionLabel("MİKROFON")
         Text(
             text = if (micGranted) "İzin verildi." else "İzin yok; dikte başlatılamaz.",
@@ -272,9 +350,10 @@ fun SettingsScreen() {
 
         Spacer(Modifier.height(26.dp))
         Text(
-            text = "Kurulum: NAS'ta köprü servisi çalışır (8787), klavye sistem " +
-                "ayarlarından etkinleştirilir ve giriş yöntemi olarak seçilir. " +
-                "Token yalnızca bu uygulamanın özel alanında saklanır.",
+            text = "Kurulum: LAN http://${ScribePrefs.DEFAULT_HOST}:${ScribePrefs.DEFAULT_PORT} " +
+                "veya dışarıdan https://${ScribePrefs.PUBLIC_HOST} (Cloudflare). Klavye sistem " +
+                "ayarlarından etkinleştirilir ve giriş yöntemi olarak seçilir. Token yalnızca " +
+                "bu uygulamanın özel alanında saklanır.",
             color = ScribeColors.Muted,
             fontSize = 11.sp,
         )
@@ -311,6 +390,11 @@ private fun describeIme(context: Context): String {
 
 private fun hasMicrophone(context: Context): Boolean =
     ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+        PackageManager.PERMISSION_GRANTED
+
+private fun hasLocalNetwork(context: Context): Boolean =
+    Build.VERSION.SDK_INT < 37 ||
+        ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_LOCAL_NETWORK) ==
         PackageManager.PERMISSION_GRANTED
 
 private fun appVersion(context: Context): String = runCatching {

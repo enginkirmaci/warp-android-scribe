@@ -49,8 +49,20 @@ Two halves, two toolchains:
 - The language toggle sends `?lang=tr` or `?lang=auto`; `prefs.language`
   persists the choice.
 - Cleartext is limited to `<nas-lan>` in
-  `res/xml/network_security_config.xml`. If a configurable host is added, it
-  needs HTTPS or an explicit config update.
+  `res/xml/network_security_config.xml`. The public route is HTTPS and needs no
+  exception.
+- targetSdk 37: Android 17 blocks sockets to LAN addresses without the
+  `ACCESS_LOCAL_NETWORK` runtime permission. It is declared in the manifest
+  and requested from the settings screen; `ScribePrefs.usesLocalNetwork` is
+  the gate, and the IME shows an error instead of a silent timeout. The
+  Cloudflare preset does not need this permission.
+- `ScribePrefs.tls` chooses `http`/`https` in the endpoint. The settings
+  presets are LAN (`<nas-lan>:8787`, no TLS) and Cloudflare
+  (`<nas-host>:443`, TLS); both use the same bearer token.
+- Public path: Cloudflare Tunnel public hostname `<nas-host>` ->
+  Nginx Proxy Manager -> `<nas-lan>:8787`. The NPM proxy host is
+  `<nas-host>`, and the wildcard `*.engin.page` certificate covers
+  it. The tunnel route itself lives in the Cloudflare dashboard.
 - `SettingsActivity` reads `Settings.Secure.ENABLED_INPUT_METHODS`? Do not: it
   throws `SecurityException` for targetSdk > 33. Use
   `InputMethodManager.enabledInputMethodList`.
@@ -82,8 +94,9 @@ adb connect 127.0.0.1:39441
 - Add the Android project to the Cargo workspace or `apps.toml`, or make the
   desktop build depend on it.
 - Commit `local.properties`, a keystore, the bridge token or an APK.
-- Bind the bridge to the public interface without the UFW LAN rule; the token
-  is the only access control.
+- Expose `/transcribe` without the 64-hex bearer token and HTTPS. The public
+  route is `https://<nas-host>`; keep the token out of logs and the
+  repo, and add Cloudflare Access or a rate limit before sharing it further.
 - Change `superwhisper`'s global language outside the bridge mutex.
 - Use `Settings.Secure` for IME state on targetSdk > 33.
 - Add a second palette/theme; the keyboard palette is the app's own and lives

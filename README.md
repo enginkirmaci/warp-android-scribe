@@ -101,8 +101,30 @@ sudo ufw allow from <nas-subnet> to any port 8787 proto tcp \
   comment 'warp-android-scribe bridge'
 ```
 
-The bridge must not be exposed beyond the LAN. It listens on all interfaces
-because the phone reaches it over Wi-Fi; the token is the only access control.
+The bridge is reachable two ways:
+
+- **LAN** `http://<nas-lan>:8787`, with UFW restricted to
+  `<nas-subnet>`.
+- **Public** `https://<nas-host>` through the existing Cloudflare
+  Tunnel into Nginx Proxy Manager, whose `<nas-host>` proxy host
+  forwards to `<nas-lan>:8787`.
+
+The bearer token is the only access control on the public route. Keep it at 64
+hex characters; if the endpoint is shared further, put Cloudflare Access or a
+rate limit in front of it.
+
+### Public endpoint
+
+NPM runs in the `npm` container (`http://<nas-lan>:81`). The proxy host
+`<nas-host>` forwards to the bridge, and the wildcard
+`*.engin.page` certificate covers it. The Cloudflare Tunnel public hostname
+points at NPM (`http://<nas-lan>:80`). The tunnel is configured in the
+Cloudflare dashboard, not in this repo.
+
+```sh
+curl -s -o /dev/null -w '%{http_code}\n' https://<nas-host>/health
+# 401 without the bearer token
+```
 
 ### Tests
 
@@ -152,7 +174,10 @@ The launcher activity is the settings screen. It stores the host, port and token
 in the app's private `SharedPreferences` (the token is only as protected as the
 app sandbox; there is no keystore yet) and offers:
 
-- host/port/token, with a "save and test" button that calls `GET /health`;
+- host/port/token, an HTTPS switch and **LAN**/**Cloudflare** presets, with a
+  "save and test" button that calls `GET /health`;
+- the Android 17 local-network permission for the LAN preset (the Cloudflare
+  route does not need it);
 - the dictation language: `Türkçe` (default) or `Otomatik`;
 - the system input-method settings/picker and the microphone permission.
 
@@ -171,9 +196,12 @@ app sandbox; there is no keystore yet) and offers:
 ### Network security
 
 `network_security_config.xml` permits cleartext only for `<nas-lan>`. The
-settings screen warns if the host is changed; another host needs HTTPS or an
-edit to that file. The bridge port is `8787` because `8765` is already taken by
-another service on the NAS.
+Cloudflare endpoint is HTTPS, so it needs no cleartext exception. Android 17
+blocks app traffic to LAN addresses unless the app holds the
+`ACCESS_LOCAL_NETWORK` runtime permission; the app declares it and the settings
+screen can request it. The public route is the fallback when the permission is
+denied or the phone is away from the LAN. The bridge port is `8787` because
+`8765` is already taken on the NAS.
 
 ## Decisions
 
@@ -187,6 +215,12 @@ another service on the NAS.
   activating Pro on the NAS is a follow-up, not a code change.
 - Superwhisper's language pin is global to the profile. The bridge serializes
   requests and sets it per request; the NAS bridge is a dedicated profile.
+- Android 17: the app targets SDK 37, so LAN traffic needs
+  `ACCESS_LOCAL_NETWORK`; the settings screen requests it. The Cloudflare
+  endpoint is the no-permission path.
+- Public endpoint: `https://<nas-host>` via Cloudflare/NPM. This
+  supersedes the earlier LAN-only decision; the 64-hex bearer token is the
+  authentication and should be rotated if it leaks.
 
 ## Known limits
 
@@ -194,4 +228,8 @@ another service on the NAS.
 - The free quota is shared per Superwhisper device/profile. Pro is required for
   sustained use.
 - `commitText` does not work in every field (passwords and `TYPE_NULL` editors).
+- The public endpoint is reachable from the internet; a leaked token allows
+  transcription requests. Cloudflare Access/WAF is the next hardening step.
+- LAN access needs the Android 17 local-network permission; without it the app
+  shows a clear error and the Cloudflare preset is the way to continue.
 - The Android build is a debug APK; release signing is not set up yet.

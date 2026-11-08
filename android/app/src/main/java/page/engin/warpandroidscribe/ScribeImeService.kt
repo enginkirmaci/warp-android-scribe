@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.inputmethodservice.InputMethodService
+import android.os.Build
 import android.os.SystemClock
 import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
@@ -183,6 +184,10 @@ class ScribeImeService : InputMethodService() {
         if (ui.phase == Phase.TRANSCRIBING || ui.phase == Phase.RECORDING) return
         if (!prefs.isConfigured) {
             showError("Önce ayarları doldur: sunucu ve token.")
+            return
+        }
+        if (prefs.usesLocalNetwork && !hasLocalNetworkPermission()) {
+            showError("Yerel ağ izni yok. Ayarlar'dan izin ver veya Cloudflare'i seç.")
             return
         }
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) !=
@@ -485,6 +490,13 @@ class ScribeImeService : InputMethodService() {
     private fun haptic(feedback: Int) {
         window?.window?.decorView?.performHapticFeedback(feedback)
     }
+
+    private fun hasLocalNetworkPermission(): Boolean =
+        Build.VERSION.SDK_INT < 37 ||
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_LOCAL_NETWORK,
+            ) == PackageManager.PERMISSION_GRANTED
 
     private companion object {
         const val MAX_RECORD_SECONDS = 120
