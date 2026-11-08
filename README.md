@@ -73,8 +73,9 @@ required and must be at least 16 characters; generate it with
 
 ### Install on the NAS
 
-The bridge needs a running `superwhisper.service` in the same user manager, and
-the NAS user must have Superwhisper signed in. The install steps used here:
+The bridge needs a running `superwhisper.service` in the same user manager.
+The NAS profile is currently on Superwhisper's free cloud quota; activate Pro
+there for sustained use. The install steps used here:
 
 ```sh
 # Build on the desktop, install on the NAS.
@@ -129,6 +130,13 @@ export ANDROID_HOME=$HOME/tools/android-sdk
 `ANDROID_HOME`. The build uses AGP 9.5.1 with built-in Kotlin (no
 `org.jetbrains.kotlin.android` plugin), the Compose compiler plugin 2.4.21,
 compile/target SDK 37, min SDK 26.
+
+One-time SDK packages (JDK 17 required):
+
+```sh
+$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager \
+  "platform-tools" "platforms;android-37.0" "build-tools;37.0.0"
+```
 
 Install and enable the IME:
 
