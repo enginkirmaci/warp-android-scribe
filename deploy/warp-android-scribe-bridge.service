@@ -1,0 +1,17 @@
+[Unit]
+Description=warp-android-scribe bridge (Superwhisper HTTP API)
+# The CLI below talks to the Superwhisper daemon over its control socket, so
+# start after it and pull it in if the session has not started it yet.
+After=superwhisper.service
+Wants=superwhisper.service
+
+[Service]
+ExecStart=%h/.local/bin/warp-android-scribe-bridge
+EnvironmentFile=%h/.config/warp-android-scribe/bridge.env
+Restart=on-failure
+RestartSec=2
+# The token lives in the environment file; keep this unit free of secrets.
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

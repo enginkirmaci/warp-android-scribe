@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- The bridge is plain HTTP on the LAN. Only the NAS host is allowed to
+         use cleartext; a different host needs an HTTPS URL or an edit here. -->
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false"><nas-lan></domain>
+    </domain-config>
+</network-security-config>
