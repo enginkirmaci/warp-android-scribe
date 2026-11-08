@@ -1,25 +1,37 @@
 package com.engin.warpandroidscribe
 
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
+import android.content.res.Resources
 import android.content.pm.PackageManager
 import android.inputmethodservice.InputMethodService
+import android.net.Uri
 import android.os.Build
 import android.os.SystemClock
 import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
+import android.view.View
 import android.view.ViewGroup
+import android.view.WindowInsets
+import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
+import androidx.core.view.inputmethod.InputConnectionCompat
+import androidx.core.view.inputmethod.InputContentInfoCompat
 import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.lifecycle.setViewTreeViewModelStoreOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import java.io.File
+import java.util.UUID
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -48,27 +60,28 @@ class ScribeImeService : InputMethodService() {
     private var transcribeJob: Job? = null
     private var activeFile: File? = null
     private var pendingFile: File? = null
-    private var clipHistory = mutableListOf<String>()
+    private var clipHistory = mutableListOf<ClipboardEntry>()
+    private var clipJob: Job? = null
     private var clipListener: ClipboardManager.OnPrimaryClipChangedListener? = null
+    private var insetListenerAttached = false
 
     private val actions: ScribeActions by lazy {
         ScribeActions(
             onDictateDown = ::dictateDown,
             onDictateUp = ::dictateUp,
-            onLock = ::lockRecording,
             onCancel = ::cancelActiveWork,
             onRetry = ::retry,
             onDismissError = ::dismissError,
             onSettings = ::openSettings,
-            onLanguage = ::toggleLanguage,
+            onToggleLanguage = ::toggleLanguage,
+            onToggleMode = ::toggleMode,
+            onToggleClipboard = ::toggleClipboard,
+            onCloseClipboard = ::closeClipboard,
+            onInsertEntry = ::insertEntry,
             onSwitchKeyboard = ::switchKeyboard,
-            onHideKeyboard = ::hideKeyboard,
             onBackspace = ::backspace,
-            onSpace = ::space,
             onEnter = ::enter,
-            onInsertChip = ::insertText,
-            onRemoveChip = ::removeChip,
-            onInsertLast = { insertText(ui.lastTranscript) },
+            onText = ::insertText,
         )
     }
 
@@ -79,8 +92,9 @@ class ScribeImeService : InputMethodService() {
         lifecycleOwner = ImeLifecycleOwner().apply { onCreate() }
         clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         ui.language = prefs.language
-        ui.lastTranscript = prefs.lastTranscript
+        ui.mode = prefs.mode
         cleanupOldRecordings()
+        cleanupClipboardCache()
     }
 
     override fun onCreateInputView(): ComposeView {
@@ -103,7 +117,19 @@ class ScribeImeService : InputMethodService() {
         // view, not from this ComposeView. Tag the whole window as well or the
         // first show throws "ViewTreeLifecycleOwner not found".
         window?.window?.decorView?.let(::attachLifecycleOwner)
+        installSystemBarInsetListener()
         return view
+    }
+
+    override fun onWindowShown() {
+        super.onWindowShown()
+        installSystemBarInsetListener()
+        updateSystemBarInset()
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        updateSystemBarInset()
     }
 
     private fun attachLifecycleOwner(view: android.view.View) {
@@ -112,12 +138,77 @@ class ScribeImeService : InputMethodService() {
         view.setViewTreeSavedStateRegistryOwner(lifecycleOwner)
     }
 
+    private fun installSystemBarInsetListener() {
+        val decor = window?.window?.decorView ?: return
+        if (insetListenerAttached) return
+        insetListenerAttached = true
+        decor.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            updateSystemBarInset()
+        }
+        decor.post(::updateSystemBarInset)
+    }
+
+    /**
+     * The IME window reaches the display bottom on gestural navigation; the
+     * system's two-button keyboard bar (switch/hide) is drawn on top of it and
+     * the navigation-bar inset is reported as zero for INPUT_METHOD windows.
+     * Measure whether the window really covers that strip, and pad the
+     * keyboard by the system's navigation-bar height when it does.
+     */
+    private fun updateSystemBarInset() {
+        val decor = window?.window?.decorView ?: return
+        val navInset = decor.rootWindowInsets?.let { insets ->
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                insets.getInsets(WindowInsets.Type.navigationBars()).bottom
+            } else {
+                @Suppress("DEPRECATION")
+                insets.systemWindowInsetBottom
+            }
+        } ?: 0
+        val coversBar = decor.height > 0 && imeWindowTouchesDisplayBottom(decor)
+        val inset = when {
+            navInset > 0 -> navInset
+            coversBar -> navigationBarHeightPx()
+            else -> 0
+        }
+        ui.systemBarInsetPx = inset
+    }
+
+    private fun imeWindowTouchesDisplayBottom(decor: View): Boolean {
+        val displayHeight = displayHeight()
+        val location = IntArray(2)
+        decor.getLocationOnScreen(location)
+        return location[1] + decor.height >= displayHeight - 1
+    }
+
+    private fun displayHeight(): Int =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            getSystemService(WindowManager::class.java)
+                .maximumWindowMetrics
+                .bounds
+                .height()
+        } else {
+            resources.displayMetrics.heightPixels
+        }
+
+    private fun navigationBarHeightPx(): Int {
+        val system = Resources.getSystem()
+        for (name in listOf("navigation_bar_height", "navigation_bar_frame_height")) {
+            val id = system.getIdentifier(name, "dimen", "android")
+            if (id == 0) continue
+            val px = runCatching { system.getDimensionPixelSize(id) }.getOrDefault(0)
+            if (px > 0) return px
+        }
+        return 0
+    }
+
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
         lifecycleOwner.onStart()
         ui.language = prefs.language
-        ui.lastTranscript = prefs.lastTranscript
-        ui.chips = buildChips()
+        ui.mode = prefs.mode
+        ui.clipboard = buildClipboard()
+        ui.showClipboard = false
         ui.canRetry = pendingFile != null
         if (ui.phase != Phase.RECORDING && ui.phase != Phase.TRANSCRIBING) {
             ui.phase = if (pendingFile != null) Phase.ERROR else Phase.IDLE
@@ -133,6 +224,7 @@ class ScribeImeService : InputMethodService() {
         super.onFinishInputView(finishingInput)
         lifecycleOwner.onStop()
         unregisterClipboard()
+        ui.showClipboard = false
         if (finishingInput) {
             cancelActiveWork()
         }
@@ -174,20 +266,14 @@ class ScribeImeService : InputMethodService() {
         }
     }
 
-    private fun lockRecording() {
-        if (ui.phase == Phase.RECORDING) {
-            ui.locked = true
-        }
-    }
-
     private fun startRecording() {
         if (ui.phase == Phase.TRANSCRIBING || ui.phase == Phase.RECORDING) return
         if (!prefs.isConfigured) {
-            showError("Önce ayarları doldur: sunucu ve token.")
+            showError("Önce ayarlardan token'ı gir.")
             return
         }
         if (prefs.usesLocalNetwork && !hasLocalNetworkPermission()) {
-            showError("Yerel ağ izni yok. Ayarlar'dan izin ver veya Cloudflare'i seç.")
+            showError("Yerel ağ izni yok. Ayarlar'dan izin ver veya UZAK modunu seç.")
             return
         }
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) !=
@@ -217,14 +303,13 @@ class ScribeImeService : InputMethodService() {
         ui.elapsedSecs = 0
         ui.error = null
         ui.canRetry = false
+        ui.showClipboard = false
         haptic(HapticFeedbackConstants.VIRTUAL_KEY)
 
         recordTicker = scope.launch {
             while (isActive && ui.phase == Phase.RECORDING) {
                 val elapsed = ((SystemClock.elapsedRealtime() - recordStartedAt) / 1000).toInt()
                 ui.elapsedSecs = elapsed
-                ui.amplitude = ((this@ScribeImeService.recorder?.amplitude ?: 0) / 32767f)
-                    .coerceIn(0f, 1f)
                 if (elapsed >= MAX_RECORD_SECONDS) {
                     stopAndTranscribe(force = true)
                     break
@@ -290,7 +375,7 @@ class ScribeImeService : InputMethodService() {
     private fun retry() {
         val file = pendingFile ?: return
         if (!prefs.isConfigured) {
-            showError("Önce ayarları doldur: sunucu ve token.")
+            showError("Önce ayarlardan token'ı gir.")
             return
         }
         transcribeJob?.cancel()
@@ -329,9 +414,7 @@ class ScribeImeService : InputMethodService() {
 
         connection.commitText(text, 1)
         prefs.addRecentTranscript(text)
-        prefs.lastTranscript = text
-        ui.lastTranscript = text
-        ui.chips = buildChips()
+        ui.clipboard = buildClipboard()
         ui.phase = Phase.IDLE
         ui.error = null
         ui.canRetry = false
@@ -349,7 +432,7 @@ class ScribeImeService : InputMethodService() {
 
     private fun friendlyError(error: Throwable): String = when (error) {
         is ScribeException -> error.message ?: "Dikte başarısız."
-        is java.io.IOException -> "Sunucuya ulaşılamadı. Wi-Fi ve NAS'ı kontrol et."
+        is java.io.IOException -> "Sunucuya ulaşılamadı. Bağlantıyı kontrol et."
         else -> "Dikte başarısız: ${error.message ?: error.javaClass.simpleName}"
     }
 
@@ -371,6 +454,7 @@ class ScribeImeService : InputMethodService() {
         ui.elapsedSecs = 0
         ui.error = null
         ui.canRetry = false
+        ui.showClipboard = false
     }
 
     private fun dismissError() {
@@ -386,6 +470,7 @@ class ScribeImeService : InputMethodService() {
         ui.error = message
         ui.canRetry = false
         ui.locked = false
+        ui.showClipboard = false
     }
 
     private fun toggleLanguage() {
@@ -394,12 +479,79 @@ class ScribeImeService : InputMethodService() {
         haptic(HapticFeedbackConstants.KEYBOARD_TAP)
     }
 
-    private fun switchKeyboard() {
-        getSystemService(InputMethodManager::class.java).showInputMethodPicker()
+    private fun toggleMode() {
+        val next = if (prefs.mode == ConnectionMode.LOCAL) {
+            ConnectionMode.REMOTE
+        } else {
+            ConnectionMode.LOCAL
+        }
+        prefs.mode = next
+        ui.mode = next
+        if (next == ConnectionMode.LOCAL && !hasLocalNetworkPermission()) {
+            showError("Yerel ağ izni yok. Ayarlar'dan izin ver.")
+        } else if (ui.phase == Phase.ERROR) {
+            ui.error = null
+            ui.phase = Phase.IDLE
+        }
+        haptic(HapticFeedbackConstants.KEYBOARD_TAP)
     }
 
-    private fun hideKeyboard() {
-        requestHideSelf(0)
+    private fun toggleClipboard() {
+        ui.showClipboard = !ui.showClipboard
+        if (ui.showClipboard) {
+            refreshClipboard()
+            ui.clipboard = buildClipboard()
+        }
+        haptic(HapticFeedbackConstants.KEYBOARD_TAP)
+    }
+
+    private fun closeClipboard() {
+        ui.showClipboard = false
+    }
+
+    private fun insertEntry(entry: ClipboardEntry) {
+        when (entry.kind) {
+            ClipKind.TEXT, ClipKind.TRANSCRIPT -> {
+                if (entry.text.isBlank()) return
+                currentInputConnection?.commitText(entry.text, 1)
+                ui.showClipboard = false
+                haptic(HapticFeedbackConstants.KEYBOARD_TAP)
+            }
+            ClipKind.IMAGE -> {
+                if (commitImage(entry)) {
+                    ui.showClipboard = false
+                    haptic(HapticFeedbackConstants.KEYBOARD_TAP)
+                } else {
+                    showError("Bu alan görsel kabul etmiyor.")
+                }
+            }
+        }
+    }
+
+    private fun commitImage(entry: ClipboardEntry): Boolean {
+        val file = entry.file ?: return false
+        val connection = currentInputConnection ?: return false
+        val editorInfo = currentInputEditorInfo ?: return false
+        val mime = entry.mime.ifBlank { "image/*" }
+        return runCatching {
+            val uri = FileProvider.getUriForFile(this, "$packageName.files", file)
+            val info = InputContentInfoCompat(
+                uri,
+                ClipDescription("image", arrayOf(mime)),
+                null,
+            )
+            InputConnectionCompat.commitContent(
+                connection,
+                editorInfo,
+                info,
+                InputConnectionCompat.INPUT_CONTENT_GRANT_READ_URI_PERMISSION,
+                null,
+            )
+        }.getOrDefault(false)
+    }
+
+    private fun switchKeyboard() {
+        getSystemService(InputMethodManager::class.java).showInputMethodPicker()
     }
 
     private fun openSettings() {
@@ -416,11 +568,6 @@ class ScribeImeService : InputMethodService() {
         haptic(HapticFeedbackConstants.KEYBOARD_TAP)
     }
 
-    private fun space() {
-        currentInputConnection?.commitText(" ", 1)
-        haptic(HapticFeedbackConstants.KEYBOARD_TAP)
-    }
-
     private fun enter() {
         val connection = currentInputConnection ?: return
         connection.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
@@ -429,24 +576,9 @@ class ScribeImeService : InputMethodService() {
     }
 
     private fun insertText(text: String) {
-        if (text.isBlank()) return
+        if (text.isEmpty()) return
         currentInputConnection?.commitText(text, 1)
         haptic(HapticFeedbackConstants.KEYBOARD_TAP)
-    }
-
-    private fun removeChip(chip: ScribeChip) {
-        if (chip.clipboard) {
-            clipHistory.remove(chip.text)
-        } else {
-            prefs.removeRecentTranscript(chip.text)
-        }
-        ui.chips = buildChips()
-    }
-
-    private fun buildChips(): List<ScribeChip> {
-        val clips = clipHistory.map { ScribeChip(it, clipboard = true) }
-        val recent = prefs.recentTranscripts().map { ScribeChip(it, clipboard = false) }
-        return (clips + recent).distinctBy { it.text }.take(MAX_CHIPS)
     }
 
     private fun registerClipboard() {
@@ -462,20 +594,124 @@ class ScribeImeService : InputMethodService() {
     }
 
     private fun refreshClipboard() {
-        val text = runCatching {
-            if (!clipboard.hasPrimaryClip()) return@runCatching ""
-            val clip = clipboard.primaryClip ?: return@runCatching ""
-            if (clip.itemCount == 0) return@runCatching ""
-            clip.getItemAt(0).coerceToText(this)?.toString()?.trim().orEmpty()
-        }.getOrDefault("")
-
-        if (text.isBlank() || text.length > MAX_CLIP_CHARS) return
-        clipHistory.remove(text)
-        clipHistory.add(0, text)
-        while (clipHistory.size > MAX_CLIP_HISTORY) {
-            clipHistory.removeAt(clipHistory.lastIndex)
+        val clip = runCatching {
+            if (!clipboard.hasPrimaryClip()) null else clipboard.primaryClip
+        }.getOrNull() ?: return
+        if (clip.itemCount == 0) return
+        clipJob?.cancel()
+        clipJob = scope.launch {
+            val entries = withContext(Dispatchers.IO) { collectClips(clip) }
+            entries.forEach(::addClip)
+            ui.clipboard = buildClipboard()
         }
-        ui.chips = buildChips()
+    }
+
+    private fun collectClips(clip: ClipData): List<ClipboardEntry> {
+        val entries = mutableListOf<ClipboardEntry>()
+        for (index in 0 until clip.itemCount) {
+            val item = clip.getItemAt(index)
+            val uri = item.uri
+            if (uri != null) {
+                val mime = runCatching { contentResolver.getType(uri) }
+                    .getOrNull()
+                    .orEmpty()
+                    .ifBlank { clip.description.getMimeType(index).orEmpty() }
+                if (mime.startsWith("image/")) {
+                    val source = uri.toString()
+                    val file = copyClipImage(uri, mime) ?: continue
+                    entries.add(
+                        ClipboardEntry(
+                            id = UUID.randomUUID().toString(),
+                            kind = ClipKind.IMAGE,
+                            file = file,
+                            mime = mime,
+                            label = "Görsel",
+                            source = source,
+                        ),
+                    )
+                    continue
+                }
+            }
+            val text = runCatching { item.coerceToText(this)?.toString()?.trim().orEmpty() }
+                .getOrDefault("")
+            if (text.isBlank() || text.length > MAX_CLIP_CHARS) continue
+            entries.add(
+                ClipboardEntry(
+                    id = UUID.randomUUID().toString(),
+                    kind = ClipKind.TEXT,
+                    text = text,
+                    label = "Pano",
+                    source = text,
+                ),
+            )
+        }
+        return entries
+    }
+
+    private fun copyClipImage(uri: Uri, mime: String): File? {
+        val dir = File(cacheDir, "clipboard").apply { mkdirs() }
+        val extension = when (mime) {
+            "image/png" -> "png"
+            "image/jpeg" -> "jpg"
+            "image/webp" -> "webp"
+            "image/gif" -> "gif"
+            else -> "img"
+        }
+        val file = File(
+            dir,
+            "clip-${System.currentTimeMillis()}-${UUID.randomUUID().toString().take(6)}.$extension",
+        )
+        val copied = runCatching {
+            val input = contentResolver.openInputStream(uri) ?: return@runCatching false
+            input.use { source ->
+                file.outputStream().use { output ->
+                    val buffer = ByteArray(32 * 1024)
+                    var total = 0L
+                    while (true) {
+                        val read = source.read(buffer)
+                        if (read <= 0) break
+                        total += read
+                        if (total > MAX_CLIP_BYTES) {
+                            throw IllegalStateException("clipboard image is too large")
+                        }
+                        output.write(buffer, 0, read)
+                    }
+                }
+            }
+            true
+        }.getOrDefault(false)
+        if (!copied || file.length() == 0L) {
+            file.delete()
+            return null
+        }
+        return file
+    }
+
+    private fun addClip(entry: ClipboardEntry) {
+        val removed = clipHistory.filter {
+            it.kind == entry.kind && it.source == entry.source
+        }
+        removed.forEach {
+            clipHistory.remove(it)
+            it.file?.delete()
+        }
+        clipHistory.add(0, entry)
+        while (clipHistory.size > MAX_CLIPS) {
+            clipHistory.removeAt(clipHistory.lastIndex).file?.delete()
+        }
+    }
+
+    private fun buildClipboard(): List<ClipboardEntry> {
+        val recent = prefs.recentTranscripts().mapIndexed { index, text ->
+            ClipboardEntry(
+                id = "recent-$index",
+                kind = ClipKind.TRANSCRIPT,
+                text = text,
+                label = "SON",
+                source = text,
+            )
+        }
+        return (clipHistory + recent).distinctBy { "${it.kind}:${it.source}" }
     }
 
     private fun cleanupOldRecordings() {
@@ -485,6 +721,13 @@ class ScribeImeService : InputMethodService() {
                 file.name.endsWith(".wav") &&
                 file.lastModified() < cutoff
         }?.forEach { it.delete() }
+    }
+
+    private fun cleanupClipboardCache() {
+        val cutoff = System.currentTimeMillis() - 24 * 60 * 60 * 1000
+        File(cacheDir, "clipboard").listFiles()
+            ?.filter { it.lastModified() < cutoff }
+            ?.forEach { it.delete() }
     }
 
     private fun haptic(feedback: Int) {
@@ -503,7 +746,7 @@ class ScribeImeService : InputMethodService() {
         const val MIN_RECORD_MS = 400L
         const val TAP_LOCK_MS = 350L
         const val MAX_CLIP_CHARS = 4000
-        const val MAX_CLIP_HISTORY = 5
-        const val MAX_CHIPS = 8
+        const val MAX_CLIPS = 8
+        const val MAX_CLIP_BYTES = 20L * 1024 * 1024
     }
 }

@@ -43,6 +43,23 @@ Two halves, two toolchains:
   none of these; a ComposeView in an IME will not compose without them.
 - State lives in `ScribeUiState` (Compose `mutableStateOf`) owned by the
   service; the UI is a pure function of it and `ScribeActions`.
+- The keyboard is a full Turkish QWERTY (`ScribeKeyboard.kt`): number row,
+  letter rows, shift/backspace, a `?123` symbol page, and the bottom
+  space/enter row. The top bar holds the Local/Remote chip, the green dictate
+  pill (`TR`/`OTO`) and the clipboard button. There is no chips row and no
+  bottom transcript strip; do not bring them back.
+- The clipboard button opens a panel instead of the keyboard-switch key: one
+  grid of cards for every clip (text, `SON` transcript, image), with no
+  separate text/image sections. Text commits with `commitText`, an image
+  copies to `cacheDir/clipboard` and goes through the
+  `${applicationId}.files` `FileProvider` with
+  `InputConnectionCompat.commitContent(connection, editorInfo, …)`. Some fields
+  reject content; show the error and keep the panel state sane.
+- The system's two-button keyboard bar (switch/hide) is drawn over the IME
+  window, and the navigation-bar inset is reported as zero for
+  `INPUT_METHOD` windows. Measure whether the IME window reaches the display
+  bottom and pad the whole keyboard by `navigation_bar_height`; do not go back
+  to a fixed 20 dp guess.
 - Audio: `WavRecorder` (16 kHz mono PCM16, `VOICE_RECOGNITION`), max 120 s.
   Delete the cache WAV on success/cancel and sweep stale files on service
   creation. Never leave a recording behind.
@@ -55,10 +72,11 @@ Two halves, two toolchains:
   `ACCESS_LOCAL_NETWORK` runtime permission. It is declared in the manifest
   and requested from the settings screen; `ScribePrefs.usesLocalNetwork` is
   the gate, and the IME shows an error instead of a silent timeout. The
-  Cloudflare preset does not need this permission.
-- `ScribePrefs.tls` chooses `http`/`https` in the endpoint. The settings
-  presets are LAN (`<nas-lan>:8787`, no TLS) and Cloudflare
-  (`<nas-host>:443`, TLS); both use the same bearer token.
+  Remote mode does not need this permission.
+- `ScribePrefs.mode` is `LOCAL` (`http://<nas-lan>:8787`) or `REMOTE`
+  (`https://<nas-host>`); both share one bearer token. The settings
+  screen and the keyboard's mode chip write the same preference. Do not add a
+  third host/port form.
 - Public path: Cloudflare Tunnel public hostname `<nas-host>` ->
   Nginx Proxy Manager -> `<nas-lan>:8787`. The NPM proxy host is
   `<nas-host>`, and the wildcard `*.engin.page` certificate covers

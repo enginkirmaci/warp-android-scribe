@@ -6,16 +6,22 @@ import org.json.JSONArray
 class ScribePrefs(context: Context) {
     private val prefs = context.getSharedPreferences("scribe", Context.MODE_PRIVATE)
 
-    var host: String
-        get() = prefs.getString(KEY_HOST, DEFAULT_HOST).orEmpty().ifBlank { DEFAULT_HOST }
-        set(value) {
-            prefs.edit().putString(KEY_HOST, normalizeHost(value)).apply()
+    /**
+     * The endpoint is one of two fixed paths; the token is shared. A stored
+     * `tls` from the earlier host/port form maps to REMOTE on first read.
+     */
+    var mode: ConnectionMode
+        get() = when (prefs.getString(KEY_MODE, null)) {
+            ConnectionMode.LOCAL.key -> ConnectionMode.LOCAL
+            ConnectionMode.REMOTE.key -> ConnectionMode.REMOTE
+            else -> if (prefs.getBoolean(KEY_TLS_LEGACY, false)) {
+                ConnectionMode.REMOTE
+            } else {
+                ConnectionMode.LOCAL
+            }
         }
-
-    var port: Int
-        get() = prefs.getInt(KEY_PORT, DEFAULT_PORT)
         set(value) {
-            prefs.edit().putInt(KEY_PORT, value).apply()
+            prefs.edit().putString(KEY_MODE, value.key).commit()
         }
 
     var token: String
@@ -30,45 +36,29 @@ class ScribePrefs(context: Context) {
             prefs.edit().putString(KEY_LANGUAGE, if (value == "auto") "auto" else "tr").apply()
         }
 
-    var tls: Boolean
-        get() = prefs.getBoolean(KEY_TLS, false)
-        set(value) {
-            prefs.edit().putBoolean(KEY_TLS, value).apply()
-        }
-
-    var lastTranscript: String
-        get() = prefs.getString(KEY_LAST, "").orEmpty()
-        set(value) {
-            prefs.edit().putString(KEY_LAST, value).apply()
-        }
-
     val endpoint: String
-        get() = "${if (tls) "https" else "http"}://$host:$port"
+        get() = when (mode) {
+            ConnectionMode.LOCAL -> "http://$LOCAL_HOST:$LOCAL_PORT"
+            ConnectionMode.REMOTE -> "https://$REMOTE_HOST"
+        }
 
     val isConfigured: Boolean
-        get() = host.isNotBlank() && port in 1..65535 && token.isNotBlank()
+        get() = token.isNotBlank()
 
-    /** A private address needs Android 17's ACCESS_LOCAL_NETWORK; a domain does not. */
+    /** A private address needs Android 17's ACCESS_LOCAL_NETWORK; remote does not. */
     val usesLocalNetwork: Boolean
-        get() = isLocalHost(host)
+        get() = mode == ConnectionMode.LOCAL
 
-    /**
-     * One committed edit for the whole server form. `apply()` is asynchronous,
-     * and a test that immediately backgrounds the app can lose the write; the
-     * settings screen calls this before its health request.
-     */
-    fun saveConnection(
-        host: String,
-        port: Int,
+    /** One committed write for the settings screen; `apply()` can be lost
+     *  when the activity is backgrounded immediately after the test. */
+    fun saveSettings(
+        mode: ConnectionMode,
         token: String,
         language: String,
-        tls: Boolean,
     ): Boolean = prefs.edit()
-        .putString(KEY_HOST, normalizeHost(host))
-        .putInt(KEY_PORT, port)
+        .putString(KEY_MODE, mode.key)
         .putString(KEY_TOKEN, token.trim())
         .putString(KEY_LANGUAGE, if (language == "auto") "auto" else "tr")
-        .putBoolean(KEY_TLS, tls)
         .commit()
 
     fun addRecentTranscript(text: String) {
@@ -92,42 +82,21 @@ class ScribePrefs(context: Context) {
     }
 
     companion object {
-        const val DEFAULT_HOST = "<nas-lan>"
-        const val DEFAULT_PORT = 8787
-        const val PUBLIC_HOST = "<nas-host>"
-        const val PUBLIC_PORT = 443
+        const val LOCAL_HOST = "<nas-lan>"
+        const val LOCAL_PORT = 8787
+        const val REMOTE_HOST = "<nas-host>"
 
-        private const val KEY_HOST = "host"
-        private const val KEY_PORT = "port"
+        private const val KEY_MODE = "mode"
         private const val KEY_TOKEN = "token"
         private const val KEY_LANGUAGE = "language"
-        private const val KEY_TLS = "tls"
-        private const val KEY_LAST = "last_transcript"
+        private const val KEY_TLS_LEGACY = "tls"
         private const val KEY_RECENT = "recent_transcripts"
 
-        fun isLocalHost(host: String): Boolean {
-            val value = host.trim().lowercase()
-                .removePrefix("http://")
-                .removePrefix("https://")
-                .substringBefore('/')
-                .substringBefore(':')
-            if (value == "localhost" || value.endsWith(".local")) return true
-            if (value.startsWith("10.") || value.startsWith("192.168.") ||
-                value.startsWith("127.")
-            ) {
-                return true
-            }
-            if (value.startsWith("172.")) {
-                return value.split('.').getOrNull(1)?.toIntOrNull()?.let { it in 16..31 } ?: false
-            }
-            return false
-        }
-
-        private fun normalizeHost(value: String): String =
-            value.trim()
-                .removePrefix("http://")
-                .removePrefix("https://")
-                .substringBefore('/')
-                .substringBefore(':')
     }
 }
+
+private val ConnectionMode.key: String
+    get() = when (this) {
+        ConnectionMode.LOCAL -> "local"
+        ConnectionMode.REMOTE -> "remote"
+    }

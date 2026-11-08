@@ -1,9 +1,9 @@
 # warp-android-scribe
 
-A compact, dictation-first Android keyboard. Hold (or tap) the green key, speak,
-and the transcript is committed into the focused field. Audio goes to a small
-bridge on <nas-name>, which hands it to Superwhisper's S1-Voice model through the
-`superwhisper` CLI.
+A dictation-first Android keyboard with a full Turkish QWERTY layout. Hold (or
+tap) the green key in the top bar, speak, and the transcript is committed into
+the focused field. Audio goes to a small bridge on <nas-name>, which hands it to
+Superwhisper's S1-Voice model through the `superwhisper` CLI.
 
 ```text
 phone IME ──HTTP/1.1, bearer token──▶ NAS bridge ──CLI──▶ Superwhisper daemon ──▶ S1-Voice
@@ -170,28 +170,35 @@ adb shell ime set    com.engin.warpandroidscribe/.ScribeImeService
 
 ### Settings
 
-The launcher activity is the settings screen. It stores the host, port and token
-in the app's private `SharedPreferences` (the token is only as protected as the
-app sandbox; there is no keystore yet) and offers:
+The launcher activity is the settings screen. It stores the token and the
+Local/Remote choice in the app's private `SharedPreferences` (the token is only
+as protected as the app sandbox; there is no keystore yet) and offers:
 
-- host/port/token, an HTTPS switch and **LAN**/**Cloudflare** presets, with a
-  "save and test" button that calls `GET /health`;
-- the Android 17 local-network permission for the LAN preset (the Cloudflare
-  route does not need it);
+- **Yerel (LAN)** / **Uzak (Cloudflare)** modes with fixed endpoints
+  (`http://<nas-lan>:8787` and `https://<nas-host>`), one shared
+  token, and a "save and test" button that calls `GET /health`;
+- the Android 17 local-network permission for the Local mode (the remote route
+  does not need it);
 - the dictation language: `Türkçe` (default) or `Otomatik`;
 - the system input-method settings/picker and the microphone permission.
 
 ### Keyboard
 
-- One compact layer: clipboard/recent chips, backspace, the green dictate key,
-  `TR`/`OTO`, the system keyboard picker, space and enter.
-- **Hold** the green key to dictate and release to send. A **quick tap** locks
-  the recording on (hands-free); tap again to stop. While recording, the status
-  row shows the timer, a lock action and cancel.
-- `X`/backspace: tap deletes one character, long-press hides the keyboard.
-- The top chips are the last clipboard entries and the last transcripts; tap
-  inserts, long-press removes. The bottom strip repeats the latest transcript.
-- Errors stay in the keyboard with "Tekrar" (retry the same WAV) and "Ayarlar".
+- Full Turkish QWERTY: number row, `q…ü`, `a…i`,
+  shift/`z…ç`/backspace, `?123`, comma, space, period and a blue enter key.
+  The `?123` page carries the symbols and an `ABC` return.
+- The top bar is the dictation surface: a **Local/Remote** chip, the green
+  **Dikte** pill, `TR`/`OTO`, and the clipboard button. A recording replaces the
+  mode chip with a cancel `X`; a quick tap locks the recording, a hold is
+  push-to-talk.
+- The clipboard button replaces the old keyboard-switch key. It opens a panel
+  over the key area with one grid of cards: text clips, `SON` transcripts and
+  image thumbnails together, with no separate sections. Tapping a text clip
+  commits it, tapping an image commits it with `InputConnection.commitContent`.
+  "Sistem klavyesi" inside the panel opens the system input-method picker.
+- There is no chips row and no bottom transcript strip. The last transcripts
+  live in the clipboard panel as `SON` entries. Errors appear as one compact
+  line with "Tekrar" (retry the same WAV) and "Ayarlar".
 
 ### Network security
 
@@ -208,7 +215,14 @@ denied or the phone is away from the LAN. The bridge port is `8787` because
 - Language: Turkish by default, with a `TR ↔ OTO` toggle on the keyboard. In a
   NAS test the same short Turkish sentence came back as English gibberish with
   `auto`, and correctly with `tr` in ~0.4 s.
-- X: tap is backspace, long-press hides the keyboard.
+- Layout: full Turkish QWERTY with the dictation/clipboard/mode bar on top;
+  no compact chips row, no bottom transcript strip.
+- Connection: one token, two fixed modes. **Yerel** is
+  `http://<nas-lan>:8787`; **Uzak** is `https://<nas-host>`. The
+  keyboard's mode chip and the settings screen toggle the same preference.
+- Clipboard: text and images. Images are copied into the app cache and shared
+  through a `FileProvider`; insertion uses `InputConnection.commitContent`, so
+  fields that do not accept content show a clear error.
 - Package: `com.engin.warpandroidscribe`; minSdk 26, targetSdk 37.
 - License: the NAS profile currently runs on Superwhisper's free 10 000-word
   cloud quota (`license status` says `unlicensed`). File transcription works;
@@ -231,5 +245,11 @@ denied or the phone is away from the LAN. The bridge port is `8787` because
 - The public endpoint is reachable from the internet; a leaked token allows
   transcription requests. Cloudflare Access/WAF is the next hardening step.
 - LAN access needs the Android 17 local-network permission; without it the app
-  shows a clear error and the Cloudflare preset is the way to continue.
+  shows a clear error and the Remote mode is the way to continue.
+- Clipboard images only paste into fields that implement `commitContent`; a
+  chat composer usually does, a plain text field does not.
+- The system keyboard bar (switch/hide) is Android's, not part of the
+  keyboard. The app measures the IME window against the display and pads the
+  keys and the panel by the navigation-bar height, so nothing is hidden under
+  it.
 - The Android build is a debug APK; release signing is not set up yet.

@@ -12,7 +12,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -28,7 +27,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -38,8 +36,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -53,6 +51,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.engin.warpandroidscribe.ConnectionMode
 import com.engin.warpandroidscribe.ScribeClient
 import com.engin.warpandroidscribe.ScribePrefs
 
@@ -62,11 +61,9 @@ fun SettingsScreen() {
     val prefs = remember { ScribePrefs(context) }
     val scope = rememberCoroutineScope()
 
-    var host by rememberSaveable { mutableStateOf(prefs.host) }
-    var port by rememberSaveable { mutableStateOf(prefs.port.toString()) }
+    var mode by rememberSaveable { mutableStateOf(prefs.mode) }
     var token by rememberSaveable { mutableStateOf(prefs.token) }
     var language by rememberSaveable { mutableStateOf(prefs.language) }
-    var secure by rememberSaveable { mutableStateOf(prefs.tls) }
     var message by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var imeStatus by remember { mutableStateOf(describeIme(context)) }
@@ -100,12 +97,11 @@ fun SettingsScreen() {
     }
 
     fun save(): Boolean {
-        val parsedPort = port.toIntOrNull()
-        if (host.isBlank() || parsedPort == null || parsedPort !in 1..65535 || token.isBlank()) {
-            message = "Host, port ve token zorunlu."
+        if (token.isBlank()) {
+            message = "Token zorunlu."
             return false
         }
-        if (!prefs.saveConnection(host, parsedPort, token, language, secure)) {
+        if (!prefs.saveSettings(mode, token, language)) {
             message = "Ayarlar kaydedilemedi."
             return false
         }
@@ -114,6 +110,13 @@ fun SettingsScreen() {
 
     fun testServer() {
         if (!save()) return
+        if (mode == ConnectionMode.LOCAL &&
+            Build.VERSION.SDK_INT >= 37 &&
+            !hasLocalNetwork(context)
+        ) {
+            message = "Yerel ağ izni gerekli: aşağıdan izin ver veya UZAK'ı seç."
+            return
+        }
         scope.launch {
             busy = true
             val client = ScribeClient(prefs)
@@ -150,80 +153,41 @@ fun SettingsScreen() {
 
         Spacer(Modifier.height(22.dp))
         SectionLabel("SUNUCU")
-        OutlinedTextField(
-            value = host,
-            onValueChange = { host = it },
-            label = { Text("Host") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(
-                value = port,
-                onValueChange = { port = it.filter(Char::isDigit).take(5) },
-                label = { Text("Port") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                modifier = Modifier.weight(1f),
+            FilterChip(
+                selected = mode == ConnectionMode.LOCAL,
+                onClick = { mode = ConnectionMode.LOCAL },
+                label = { Text("Yerel (LAN)") },
             )
-            OutlinedTextField(
-                value = token,
-                onValueChange = { token = it },
-                label = { Text("Token") },
-                singleLine = true,
-                visualTransformation = PasswordVisualTransformation(),
-                modifier = Modifier.weight(2f),
+            FilterChip(
+                selected = mode == ConnectionMode.REMOTE,
+                onClick = { mode = ConnectionMode.REMOTE },
+                label = { Text("Uzak (Cloudflare)") },
             )
         }
-        Spacer(Modifier.height(8.dp))
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text("HTTPS", color = ScribeColors.Text, fontSize = 12.sp)
-            Switch(checked = secure, onCheckedChange = { secure = it })
-            Spacer(Modifier.weight(1f))
-            OutlinedButton(
-                onClick = {
-                    host = ScribePrefs.DEFAULT_HOST
-                    port = ScribePrefs.DEFAULT_PORT.toString()
-                    secure = false
-                },
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                modifier = Modifier.height(34.dp),
-            ) {
-                Text("LAN", fontSize = 11.sp)
-            }
-            OutlinedButton(
-                onClick = {
-                    host = ScribePrefs.PUBLIC_HOST
-                    port = ScribePrefs.PUBLIC_PORT.toString()
-                    secure = true
-                },
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                modifier = Modifier.height(34.dp),
-            ) {
-                Text("Cloudflare", fontSize = 11.sp)
-            }
-        }
+        Spacer(Modifier.height(6.dp))
         Text(
-            text = "LAN: http://${ScribePrefs.DEFAULT_HOST}:${ScribePrefs.DEFAULT_PORT}  ·  " +
-                "Cloudflare: https://${ScribePrefs.PUBLIC_HOST}",
+            text = "Yerel: http://${ScribePrefs.LOCAL_HOST}:${ScribePrefs.LOCAL_PORT}  ·  " +
+                "Uzak: https://${ScribePrefs.REMOTE_HOST}",
             color = ScribeColors.Muted,
             fontSize = 11.sp,
         )
-        if (!secure && host.trim() != ScribePrefs.DEFAULT_HOST) {
-            Spacer(Modifier.height(6.dp))
-            Text(
-                text = "Uyarı: düz HTTP yalnızca ${ScribePrefs.DEFAULT_HOST} için açık. " +
-                    "Başka bir host için HTTPS'i aç.",
-                color = ScribeColors.Error,
-                fontSize = 11.sp,
-            )
-        }
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = token,
+            onValueChange = { token = it },
+            label = { Text("Token") },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Text(
+            text = "Token iki modda da aynı. Yerel mod Android 17 yerel ağ izni ister.",
+            color = ScribeColors.Muted,
+            fontSize = 11.sp,
+        )
 
-        Spacer(Modifier.height(22.dp))
+        Spacer(Modifier.height(18.dp))
         SectionLabel("DİL")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(
@@ -243,7 +207,7 @@ fun SettingsScreen() {
             fontSize = 11.sp,
         )
 
-        Spacer(Modifier.height(22.dp))
+        Spacer(Modifier.height(18.dp))
         Button(
             onClick = { if (save()) message = "Kaydedildi." },
             modifier = Modifier.fillMaxWidth().height(48.dp),
@@ -265,7 +229,8 @@ fun SettingsScreen() {
                 color = if (it.contains("hata", ignoreCase = true) ||
                     it.contains("reddetti", ignoreCase = true) ||
                     it.contains("ulaşılamadı", ignoreCase = true) ||
-                    it.contains("zorunlu", ignoreCase = true)
+                    it.contains("zorunlu", ignoreCase = true) ||
+                    it.contains("gerekli", ignoreCase = true)
                 ) {
                     ScribeColors.Error
                 } else {
@@ -305,10 +270,15 @@ fun SettingsScreen() {
         Text(
             text = when {
                 Build.VERSION.SDK_INT < 37 -> "Android 16 ve altında gerekmez."
+                mode == ConnectionMode.REMOTE -> "Uzak HTTPS için gerekmez."
                 localOk -> "İzin verildi."
-                else -> "LAN için izin gerekli; Cloudflare seçilirse gerekmez."
+                else -> "Yerel mod için izin gerekli."
             },
-            color = if (localOk) ScribeColors.Text else ScribeColors.Error,
+            color = if (localOk || mode == ConnectionMode.REMOTE) {
+                ScribeColors.Text
+            } else {
+                ScribeColors.Error
+            },
             fontSize = 13.sp,
         )
         if (Build.VERSION.SDK_INT >= 37) {
@@ -350,10 +320,9 @@ fun SettingsScreen() {
 
         Spacer(Modifier.height(26.dp))
         Text(
-            text = "Kurulum: LAN http://${ScribePrefs.DEFAULT_HOST}:${ScribePrefs.DEFAULT_PORT} " +
-                "veya dışarıdan https://${ScribePrefs.PUBLIC_HOST} (Cloudflare). Klavye sistem " +
-                "ayarlarından etkinleştirilir ve giriş yöntemi olarak seçilir. Token yalnızca " +
-                "bu uygulamanın özel alanında saklanır.",
+            text = "Yerel mod LAN köprüsünü (8787), uzak mod Cloudflare HTTPS'i " +
+                "kullanır. Klavye sistem ayarlarından etkinleştirilir ve giriş yöntemi " +
+                "olarak seçilir. Token yalnızca bu uygulamanın özel alanında saklanır.",
             color = ScribeColors.Muted,
             fontSize = 11.sp,
         )
