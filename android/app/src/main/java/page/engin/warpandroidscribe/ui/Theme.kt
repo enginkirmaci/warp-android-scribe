@@ -18,7 +18,6 @@ object ScribeColors {
     val RecordingBg = Color(0xFF2A1414)
     val Error = Color(0xFFF87171)
     val ErrorBg = Color(0xFF2A1215)
-    val Blue = Color(0xFF60A5FA)
 }
 
 private val ScribeScheme = darkColorScheme(

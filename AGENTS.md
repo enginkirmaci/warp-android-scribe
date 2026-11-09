@@ -56,8 +56,11 @@ Two halves, two toolchains:
 - The keyboard opens compact (`KeyboardMode.COMPACT`) and resets to compact on
   every `onWindowShown`; the full layout is a temporary switch, not a
   preference. The top bar is the keyboard icon (tap toggles full QWERTY,
-  long-press opens Settings), the language code, **Dictate**, clipboard and
-  delete (hold repeats). Under it, `ScribePrefs.shortcuts` renders the
+  long-press opens Settings), the language code, **Dictate**, clipboard and —
+  in compact only — delete (hold repeats); the full layout carries its own
+  backspace in the letter row, so the bar hands that slot to Dictate. The
+  language and clipboard controls go inert and dim while a recording or a
+  transcription runs. Under it, `ScribePrefs.shortcuts` renders the
   configurable slash commands (`/goal`, `/compact` by default). The compact
   body is cursor arrows (hold repeats), space/enter, icon buttons for
   `Undo`/`Cut`/`Copy`/`Paste`, and a single horizontal clipboard strip of
@@ -72,8 +75,9 @@ Two halves, two toolchains:
   `InputConnectionCompat.commitContent(connection, editorInfo, …)`. Some fields
   reject content; show the error and keep the panel state sane.
 - The quick grid expands to `ClipboardView.FULL`: `ALL`/`TEXT`/`IMAGES`/`RECENT`
-  filters, relative timestamps, long-press `Paste`/`Copy`/`Delete`, and a
-  two-tap `Clear all` that removes clips but keeps `RECENT` transcripts.
+  filters, relative timestamps, long-press `Insert`/`Copy`/`Delete` (the picked
+  card keeps a green outline and the rest dim; Delete is the error colour), and
+  a two-tap `Clear all` that removes clips but keeps `RECENT` transcripts.
   Search is deliberately v2: an IME-internal query needs the QWERTY routed to
   it instead of the app's `InputConnection`. Clipboard history is session-only;
   do not claim it survives process death.

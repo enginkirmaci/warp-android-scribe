@@ -599,6 +599,10 @@ class ScribeImeService : InputMethodService() {
     }
 
     private fun toggleClipboard() {
+        // Opening the panel mid-dictation hid the timer while the microphone
+        // kept running; the top bar now dims the button, and this is the
+        // matching gate for anything that still reaches it.
+        if (ui.phase == Phase.RECORDING || ui.phase == Phase.TRANSCRIBING) return
         ui.showLanguages = false
         if (ui.clipboardView == ClipboardView.QUICK) {
             ui.clipboardView = ClipboardView.HIDDEN

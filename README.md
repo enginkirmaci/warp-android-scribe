@@ -251,10 +251,10 @@ is no keystore yet) and offers:
 
 - The keyboard opens in a compact dictation/prompt layout. The top bar, left
   to right: the keyboard icon, the current language code (`TR`, `EN`,
-  `AUTO`, …), the green **Dictate** pill, clipboard and delete. The keyboard
-  icon switches to the full QWERTY; long-press opens Settings. Tapping the
-  language code opens the in-keyboard language panel, using the same list as
-  Settings.
+  `AUTO`, …), the green **Dictate** pill, clipboard and, in compact only,
+  delete. The keyboard icon switches to the full QWERTY; long-press opens
+  Settings. Tapping the language code opens the in-keyboard language panel,
+  using the same list as Settings.
 - Under the top bar, the app-configured shortcut row shows slash commands
   (`/goal`, `/compact` by default). Tapping inserts the command plus a space;
   edit the comma-separated list in Settings.
@@ -280,10 +280,11 @@ is no keystore yet) and offers:
   image thumbnails together, with no separate sections. Tapping a text clip
   commits it, tapping an image commits it with `InputConnection.commitContent`.
   The expand icon opens the full clipboard view with `ALL`/`TEXT`/`IMAGES`/
-  `RECENT` filters, relative timestamps, long-press actions (`Paste`, `Copy`,
-  `Delete`) and a two-tap `Clear all` (clips only; transcripts stay). Search is
-  not implemented yet. The quick panel's "System keyboard"
-  opens the system input-method picker.
+  `RECENT` filters, relative timestamps, long-press actions (`Insert`, `Copy`,
+  `Delete`) and a two-tap `Clear all` (clips only; transcripts stay). The
+  picked card keeps a green outline while the rest dim. Search is not
+  implemented yet. The quick panel's "System keyboard" opens the system
+  input-method picker.
 - There is no chips row and no bottom transcript strip. The last transcripts
   live in the clipboard panel as `RECENT` entries. Errors appear as one compact
   line with "Retry" (retry the same WAV) and "Settings".
@@ -307,8 +308,8 @@ denied or the phone is away from the LAN. The bridge port is `8787` because
   panel.
 - Layout: compact dictation/prompt surface by default; the left-hand keyboard
   icon opens the full English QWERTY and returns. The top bar is keyboard
-  icon, language, Dictate, clipboard, delete. Slash-command shortcuts come
-  from Settings.
+  icon, language, Dictate, clipboard and the compact delete key. Slash-command
+  shortcuts come from Settings.
   No mode chip, no fixed starter row, vibration off, no bottom transcript
   strip.
 - Connection: one token, two modes with editable URLs. The initial Local URL is
