@@ -115,6 +115,27 @@ val SUPPORTED_LANGUAGES = listOf(
 
 const val DEFAULT_LANGUAGE = "tr"
 
+/**
+ * The curated head of every picker. The rest of [SUPPORTED_LANGUAGES] follows
+ * in English-name order, because the Superwhisper order after these is not
+ * alphabetical in any language the user reads.
+ */
+val COMMON_LANGUAGE_CODES = listOf(
+    "auto", "en", "en-GB", "fr", "de", "ja", "es", "zh", "zh-TW", "nl",
+    "hi", "ru", "ko", "it", "uk", "pl", "pt", "tr",
+)
+
+/** The order the pickers render: common first, then everything else by name. */
+fun displayLanguages(all: List<DictationLanguage> = SUPPORTED_LANGUAGES): List<DictationLanguage> {
+    val common = COMMON_LANGUAGE_CODES.mapNotNull { code ->
+        all.firstOrNull { it.code == code }
+    }
+    val rest = all
+        .filterNot { it.code in COMMON_LANGUAGE_CODES }
+        .sortedBy { it.name.lowercase() }
+    return common + rest
+}
+
 private val LANGUAGE_CODE = Regex("^(auto|[A-Za-z]{2,3}(-[A-Za-z]{2})?)$")
 
 fun isSupportedLanguage(code: String): Boolean = LANGUAGE_CODE.matches(code)
@@ -123,4 +144,4 @@ fun languageName(code: String): String =
     SUPPORTED_LANGUAGES.firstOrNull { it.code == code }?.name ?: code
 
 fun languageShort(code: String): String =
-    if (code == "auto") "AUTO" else code.substringBefore('-').uppercase()
+    if (code == "auto") "AUTO" else code.uppercase()

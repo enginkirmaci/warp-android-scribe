@@ -21,7 +21,6 @@ import android.view.WindowInsets
 import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
-import android.view.inputmethod.InputMethodManager
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.core.content.ContextCompat
@@ -63,6 +62,7 @@ class ScribeImeService : InputMethodService() {
     private var pendingFile: File? = null
     private var clipHistory = mutableListOf<ClipboardEntry>()
     private var clipJob: Job? = null
+    private var noticeJob: Job? = null
     private var clipListener: ClipboardManager.OnPrimaryClipChangedListener? = null
     private var insetListenerAttached = false
 
@@ -86,10 +86,10 @@ class ScribeImeService : InputMethodService() {
             onExpandClipboard = ::expandClipboard,
             onCloseClipboard = ::closeClipboard,
             onInsertEntry = ::insertEntry,
+            onUndoInsert = ::undoInsert,
             onDeleteEntry = ::deleteEntry,
             onClearClips = ::clearClips,
             onCopyEntry = ::copyEntry,
-            onSwitchKeyboard = ::switchKeyboard,
             onBackspace = ::backspace,
             onEnter = ::enter,
             onText = ::insertText,
@@ -259,6 +259,7 @@ class ScribeImeService : InputMethodService() {
         unregisterClipboard()
         ui.clipboardView = ClipboardView.HIDDEN
         ui.showLanguages = false
+        clearNotice()
         if (finishingInput) {
             cancelActiveWork()
         }
@@ -337,6 +338,7 @@ class ScribeImeService : InputMethodService() {
         ui.elapsedSecs = 0
         ui.error = null
         ui.canRetry = false
+        clearNotice()
         ui.clipboardView = ClipboardView.HIDDEN
         ui.showLanguages = false
         haptic(HapticFeedbackConstants.VIRTUAL_KEY)
@@ -455,6 +457,33 @@ class ScribeImeService : InputMethodService() {
         ui.phase = Phase.IDLE
         ui.error = null
         ui.canRetry = false
+        showInsertedNotice(text)
+        haptic(HapticFeedbackConstants.KEYBOARD_TAP)
+    }
+
+    /** A transcript is in the field; keep an Undo reachable for a few seconds. */
+    private fun showInsertedNotice(text: String) {
+        noticeJob?.cancel()
+        ui.notice = "Inserted"
+        ui.noticeUndoCodePoints = text.codePointCount(0, text.length)
+        noticeJob = scope.launch {
+            delay(NOTICE_MS)
+            clearNotice()
+        }
+    }
+
+    private fun clearNotice() {
+        noticeJob?.cancel()
+        noticeJob = null
+        ui.notice = null
+        ui.noticeUndoCodePoints = 0
+    }
+
+    private fun undoInsert() {
+        val codePoints = ui.noticeUndoCodePoints
+        if (codePoints <= 0) return
+        currentInputConnection?.deleteSurroundingTextInCodePoints(codePoints, 0)
+        clearNotice()
         haptic(HapticFeedbackConstants.KEYBOARD_TAP)
     }
 
@@ -491,6 +520,7 @@ class ScribeImeService : InputMethodService() {
         ui.elapsedSecs = 0
         ui.error = null
         ui.canRetry = false
+        clearNotice()
         ui.clipboardView = ClipboardView.HIDDEN
         ui.showLanguages = false
     }
@@ -508,6 +538,7 @@ class ScribeImeService : InputMethodService() {
         ui.error = message
         ui.canRetry = false
         ui.locked = false
+        clearNotice()
         ui.clipboardView = ClipboardView.HIDDEN
         ui.showLanguages = false
     }
@@ -696,10 +727,6 @@ class ScribeImeService : InputMethodService() {
         }.getOrDefault(false)
     }
 
-    private fun switchKeyboard() {
-        getSystemService(InputMethodManager::class.java).showInputMethodPicker()
-    }
-
     private fun openSettings() {
         startActivity(
             Intent(this, SettingsActivity::class.java)
@@ -795,7 +822,6 @@ class ScribeImeService : InputMethodService() {
                             kind = ClipKind.IMAGE,
                             file = file,
                             mime = mime,
-                            label = "Image",
                             source = source,
                             createdAt = System.currentTimeMillis(),
                         ),
@@ -811,7 +837,6 @@ class ScribeImeService : InputMethodService() {
                     id = UUID.randomUUID().toString(),
                     kind = ClipKind.TEXT,
                     text = text,
-                    label = "Clipboard",
                     source = text,
                     createdAt = System.currentTimeMillis(),
                 ),
@@ -879,7 +904,6 @@ class ScribeImeService : InputMethodService() {
                 id = "recent-$index",
                 kind = ClipKind.TRANSCRIPT,
                 text = text,
-                label = "RECENT",
                 source = text,
             )
         }
@@ -920,5 +944,7 @@ class ScribeImeService : InputMethodService() {
         const val MAX_CLIP_CHARS = 4000
         const val MAX_CLIPS = 8
         const val MAX_CLIP_BYTES = 20L * 1024 * 1024
+        /** How long the "Inserted · Undo" state stays on the dictate pill. */
+        const val NOTICE_MS = 4_000L
     }
 }

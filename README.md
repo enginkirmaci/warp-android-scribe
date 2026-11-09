@@ -227,11 +227,11 @@ both server URLs, the dictation language, the tone and the shortcuts in the app'
 `SharedPreferences` (the token is only as protected as the app sandbox; there
 is no keystore yet) and offers:
 
-- **Local** / **Remote** modes with editable server URLs. The defaults are the
-  owner's bridge (`http://<nas-lan>:8787` and
-  `https://<nas-host>`), but both fields can be changed; the Remote
-  URL must be HTTPS. One shared token and a **Save & test** button that calls
-  `GET /health`;
+- **Local** / **Remote** modes. The mode's URL is the field on screen; the
+  other one waits as a one-line summary until **Edit** is tapped. The defaults
+  are the owner's bridge (`http://<nas-lan>:8787` and
+  `https://<nas-host>`); the Remote URL must be HTTPS. One shared
+  token and a **Save & test** button that calls `GET /health`;
 - the Android 17 local-network permission for the Local mode (the remote route
   does not need it);
 - the dictation language: all 103 languages Superwhisper 1.2.0 exposes, with a
@@ -244,21 +244,32 @@ is no keystore yet) and offers:
 - the processing mode: Cloud, Offline or Offline Lite, with the download size,
   a progress bar and a cancel button. The bridge downloads missing models to
   the NAS in the background and switches when they are ready;
-- a comma-separated list of slash commands shown above the compact keyboard;
+- a comma-separated list of quick inserts (words or slash commands) shown
+  above the compact keyboard;
 - the system input-method settings/picker and the microphone permission.
+
+**Save** and **Save & test** sit on a pinned bar at the bottom of the screen,
+together with the result message, so the action is never three cards away from
+the field it saves. The top-right badge is `ACTIVE` only when this app is the
+system's current keyboard, `ENABLED` when it is enabled but another IME is
+selected, and `SETUP` otherwise.
 
 ### Keyboard
 
 - The keyboard opens in a compact dictation/prompt layout. The top bar, left
-  to right: the keyboard icon, the current language code (`TR`, `EN`,
-  `AUTO`, …), the green **Dictate** pill, clipboard and, in compact only,
+  to right: the keyboard icon, the green **Dictate** pill with its trailing
+  language segment (`TR`, `EN-GB`, `AUTO`, …), clipboard and, in compact only,
   delete. The keyboard icon switches to the full QWERTY; long-press opens
-  Settings. Tapping the language code opens the in-keyboard language panel,
+  Settings. Tapping the language segment opens the in-keyboard language panel,
   using the same list as Settings.
+- After a transcript lands the pill reads **Inserted** for four seconds and the
+  segment becomes **Undo**, which deletes exactly the code points that
+  dictation inserted. The confirmation costs no extra row.
 - Under the top bar, the app-configured shortcut row shows slash commands
   (`/goal`, `/compact` by default). Tapping inserts the command plus a space;
   edit the comma-separated list in Settings.
-- The compact body: cursor arrows (hold to repeat), space and enter, then
+- The compact body: cursor arrows (hold to repeat), the unlabelled space bar
+  and enter, then
   icon buttons for `Undo`, `Cut`, `Copy` and `Paste`. Below the icons, the
   clipboard appears as a single horizontal row of boxes; tap one to insert it.
   Delete is the top-bar key (hold to repeat); there is no backspace beside the
@@ -267,6 +278,8 @@ is no keystore yet) and offers:
   `qwertyuiop`, `asdfghjkl`, `zxcvbnm`, shift/backspace, `?123`,
   space/enter); the same icon returns to the compact surface. The compact
   layout is the default on every keyboard show; the full switch is temporary.
+  Shift applies to one letter; a second tap within 300 ms locks it, and the
+  locked key shows a small bar under the arrow.
 - The Enter key follows the focused editor: when it declares a send action the
   key shows `↑` and performs that action, so Enter sends in a chat composer;
   plain and multiline fields still get a newline. The system's own app actions
@@ -276,18 +289,24 @@ is no keystore yet) and offers:
   the keyboard icon with a cancel `X`; a quick tap locks the recording, a hold
   is push-to-talk.
 - The clipboard button replaces the old keyboard-switch key. It opens a panel
-  over the key area with one grid of cards: text clips, `RECENT` transcripts and
-  image thumbnails together, with no separate sections. Tapping a text clip
-  commits it, tapping an image commits it with `InputConnection.commitContent`.
-  The expand icon opens the full clipboard view with `ALL`/`TEXT`/`IMAGES`/
-  `RECENT` filters, relative timestamps, long-press actions (`Insert`, `Copy`,
-  `Delete`) and a two-tap `Clear all` (clips only; transcripts stay). The
-  picked card keeps a green outline while the rest dim. Search is not
-  implemented yet. The quick panel's "System keyboard" opens the system
-  input-method picker.
+  over the key area with one grid of cards: `TEXT` clips, `DICTATION`
+  transcripts and `IMAGE` thumbnails together, with no separate sections.
+  Tapping a text clip commits it, tapping an image commits it with
+  `InputConnection.commitContent`. The expand icon opens the full clipboard view
+  with `ALL`/`TEXT`/`IMAGES`/`DICTATION` filters, relative timestamps,
+  long-press actions (`Insert`, `Copy`, `Delete`) and a two-tap `Clear all`
+  (clips only; transcripts stay). The picked card keeps a green outline while
+  the rest dim, and an empty filter says which kind is missing. Search is not
+  implemented yet. The panel has no "System keyboard" action; the picker lives
+  in Settings.
 - There is no chips row and no bottom transcript strip. The last transcripts
-  live in the clipboard panel as `RECENT` entries. Errors appear as one compact
+  live in the clipboard panel as `DICTATION` entries. Errors appear as one compact
   line with "Retry" (retry the same WAV) and "Settings".
+
+The language panel opens centred on the current language: a **COMMON** block
+first, then the remaining languages grouped by the first letter of their
+English name, with an A–Z rail above the list that jumps to a letter. The panel
+has no text field — an IME-internal query would need the QWERTY routed to it.
 
 ### Network security
 
@@ -304,12 +323,12 @@ denied or the phone is away from the LAN. The bridge port is `8787` because
 - Language: Turkish by default, with a selectable list of supported dictation
   languages and `Auto-detect`. In a NAS test the same short Turkish sentence
   came back as English gibberish with `auto`, and correctly with `tr` in
-  ~0.4 s; the keyboard label shows the selected code and opens the language
+  ~0.4 s; the pill segment shows the selected code and opens the language
   panel.
 - Layout: compact dictation/prompt surface by default; the left-hand keyboard
   icon opens the full English QWERTY and returns. The top bar is keyboard
-  icon, language, Dictate, clipboard and the compact delete key. Slash-command
-  shortcuts come from Settings.
+  icon, the Dictate pill carrying the language segment, clipboard and the
+  compact delete key. Quick inserts come from Settings.
   No mode chip, no fixed starter row, vibration off, no bottom transcript
   strip.
 - Connection: one token, two modes with editable URLs. The initial Local URL is

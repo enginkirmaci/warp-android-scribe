@@ -13,11 +13,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -37,7 +37,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import java.util.Locale
@@ -45,6 +44,7 @@ import com.engin.warpandroidscribe.DictationLanguage
 import com.engin.warpandroidscribe.DictationTone
 import com.engin.warpandroidscribe.ServerSettings
 import com.engin.warpandroidscribe.Vocabulary
+import com.engin.warpandroidscribe.displayLanguages
 
 @Composable
 internal fun LanguagePickerDialog(
@@ -54,11 +54,12 @@ internal fun LanguagePickerDialog(
     onDismiss: () -> Unit,
 ) {
     var query by rememberSaveable { mutableStateOf("") }
-    val filtered = remember(query, languages) {
+    val ordered = remember(languages) { displayLanguages(languages) }
+    val filtered = remember(query, ordered) {
         if (query.isBlank()) {
-            languages
+            ordered
         } else {
-            languages.filter { language ->
+            ordered.filter { language ->
                 language.name.contains(query, ignoreCase = true) ||
                     language.code.contains(query, ignoreCase = true)
             }
@@ -73,7 +74,7 @@ internal fun LanguagePickerDialog(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 18.dp)
-                .clip(RoundedCornerShape(24.dp))
+                .clip(ScribeShape.Pill)
                 .background(ScribeColors.Surface)
                 .padding(16.dp),
         ) {
@@ -84,19 +85,24 @@ internal fun LanguagePickerDialog(
                 Text(
                     "Language",
                     color = ScribeColors.Text,
-                    fontSize = 18.sp,
+                    fontSize = ScribeText.SheetTitle,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.weight(1f),
                 )
-                Text(
-                    "Close",
-                    color = ScribeColors.Muted,
-                    fontSize = 12.sp,
+                Box(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
+                        .sizeIn(minWidth = ScribeSize.Tap, minHeight = ScribeSize.Key)
+                        .clip(ScribeShape.Chip)
                         .clickable(onClick = onDismiss)
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                )
+                        .padding(horizontal = 8.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        "Close",
+                        color = ScribeColors.Muted,
+                        fontSize = ScribeText.Body,
+                    )
+                }
             }
             OutlinedTextField(
                 value = query,
@@ -104,13 +110,13 @@ internal fun LanguagePickerDialog(
                 label = { Text("Filter languages") },
                 placeholder = { Text("Turkish, tr, …") },
                 singleLine = true,
-                shape = RoundedCornerShape(12.dp),
+                shape = ScribeShape.Surface,
                 modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
             )
             Text(
-                "${filtered.size} of ${languages.size}",
+                "${filtered.size} of ${ordered.size}",
                 color = ScribeColors.Muted,
-                fontSize = 10.sp,
+                fontSize = ScribeText.Caption,
                 modifier = Modifier.padding(top = 6.dp, bottom = 4.dp),
             )
             LazyColumn(modifier = Modifier.heightIn(max = 440.dp)) {
@@ -135,22 +141,23 @@ private fun LanguageRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
+            .height(ScribeSize.Key)
+            .clip(ScribeShape.Chip)
             .background(if (selected) ScribeColors.Green.copy(alpha = 0.16f) else ScribeColors.Surface)
             .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 10.dp),
+            .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             language.name,
             color = if (selected) ScribeColors.Green else ScribeColors.Text,
-            fontSize = 14.sp,
+            fontSize = ScribeText.Label,
             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
-        Text(language.code.uppercase(), color = ScribeColors.Muted, fontSize = 10.sp)
+        Text(language.code.uppercase(), color = ScribeColors.Muted, fontSize = ScribeText.Caption)
     }
 }
 
@@ -165,16 +172,16 @@ internal fun TonePicker(
     Box(Modifier.fillMaxWidth()) {
         OutlinedButton(
             onClick = { open = true },
-            shape = RoundedCornerShape(12.dp),
-            modifier = Modifier.fillMaxWidth().height(52.dp),
+            shape = ScribeShape.Surface,
+            modifier = Modifier.fillMaxWidth().height(ScribeSize.Field),
         ) {
             Text(
                 current,
                 color = ScribeColors.Text,
-                fontSize = 14.sp,
+                fontSize = ScribeText.Label,
                 modifier = Modifier.weight(1f),
             )
-            Text("▾", color = ScribeColors.Muted, fontSize = 14.sp)
+            Text("▾", color = ScribeColors.Muted, fontSize = ScribeText.Label)
         }
         DropdownMenu(
             expanded = open,
@@ -218,14 +225,14 @@ internal fun VocabularyCard(
         Text(
             "Load the server profile to edit the vocabulary.",
             color = ScribeColors.Muted,
-            fontSize = 12.sp,
+            fontSize = ScribeText.Body,
         )
         return
     }
 
-    Text("Words", color = ScribeColors.Text, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+    Text("Words", color = ScribeColors.Text, fontSize = ScribeText.Body, fontWeight = FontWeight.Medium)
     if (vocabulary.terms.isEmpty()) {
-        Text("No words yet.", color = ScribeColors.Muted, fontSize = 11.sp)
+        Text("No words yet.", color = ScribeColors.Muted, fontSize = ScribeText.Body)
     } else {
         FlowRow(
             horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -246,7 +253,7 @@ internal fun VocabularyCard(
             onValueChange = { term = it },
             label = { Text("Add a word") },
             singleLine = true,
-            shape = RoundedCornerShape(12.dp),
+            shape = ScribeShape.Surface,
             modifier = Modifier.weight(1f),
         )
         Button(
@@ -258,46 +265,48 @@ internal fun VocabularyCard(
                 }
             },
             enabled = !busy && term.isNotBlank(),
-            shape = RoundedCornerShape(12.dp),
-            modifier = Modifier.height(52.dp),
+            shape = ScribeShape.Surface,
+            modifier = Modifier.height(ScribeSize.Field),
         ) {
-            Text("Add", fontSize = 12.sp)
+            Text("Add")
         }
     }
 
     Spacer(Modifier.height(2.dp))
-    Text("Replacements", color = ScribeColors.Text, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+    Text("Replacements", color = ScribeColors.Text, fontSize = ScribeText.Body, fontWeight = FontWeight.Medium)
     if (vocabulary.replacements.isEmpty()) {
         Text(
             "No replacements yet. A replacement rewrites what the model heard.",
             color = ScribeColors.Muted,
-            fontSize = 11.sp,
+            fontSize = ScribeText.Body,
         )
     } else {
         for (item in vocabulary.replacements) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
+                    .heightIn(min = ScribeSize.Tap)
+                    .clip(ScribeShape.Chip)
                     .background(ScribeColors.Key)
-                    .padding(start = 10.dp, end = 2.dp, top = 6.dp, bottom = 6.dp),
+                    .padding(start = 12.dp, end = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
                     "${item.original} → ${item.with}",
                     color = ScribeColors.Text,
-                    fontSize = 12.sp,
+                    fontSize = ScribeText.Body,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
                 Box(
                     modifier = Modifier
+                        .sizeIn(minWidth = ScribeSize.Key, minHeight = ScribeSize.Key)
                         .clip(CircleShape)
-                        .clickable { onRemoveReplacement(item.original) }
-                        .padding(6.dp),
+                        .clickable { onRemoveReplacement(item.original) },
+                    contentAlignment = Alignment.Center,
                 ) {
-                    Text("×", color = ScribeColors.Muted, fontSize = 14.sp)
+                    Text("×", color = ScribeColors.Muted, fontSize = ScribeText.Label)
                 }
             }
         }
@@ -311,7 +320,7 @@ internal fun VocabularyCard(
             onValueChange = { original = it },
             label = { Text("Heard") },
             singleLine = true,
-            shape = RoundedCornerShape(12.dp),
+            shape = ScribeShape.Surface,
             modifier = Modifier.weight(1f),
         )
         OutlinedTextField(
@@ -319,7 +328,7 @@ internal fun VocabularyCard(
             onValueChange = { replacement = it },
             label = { Text("Write") },
             singleLine = true,
-            shape = RoundedCornerShape(12.dp),
+            shape = ScribeShape.Surface,
             modifier = Modifier.weight(1f),
         )
     }
@@ -334,24 +343,24 @@ internal fun VocabularyCard(
             }
         },
         enabled = !busy && original.isNotBlank() && replacement.isNotBlank(),
-        shape = RoundedCornerShape(12.dp),
-        modifier = Modifier.fillMaxWidth().height(44.dp),
+        shape = ScribeShape.Surface,
+        modifier = Modifier.fillMaxWidth().height(ScribeSize.Tap),
     ) {
-        Text("Add replacement", fontSize = 12.sp)
+        Text("Add replacement")
     }
     OutlinedButton(
         onClick = onSave,
         enabled = !busy,
-        shape = RoundedCornerShape(12.dp),
-        modifier = Modifier.fillMaxWidth().height(46.dp),
+        shape = ScribeShape.Surface,
+        modifier = Modifier.fillMaxWidth().height(ScribeSize.Tap),
     ) {
-        Text(if (busy) "Saving…" else "Save vocabulary", fontSize = 12.sp)
+        Text(if (busy) "Saving…" else "Save vocabulary")
     }
     Text(
         "Saved in the server profile. Replacements apply to every mode; terms " +
             "match best with the Offline acoustic vocabulary.",
         color = ScribeColors.Muted,
-        fontSize = 10.sp,
+        fontSize = ScribeText.Body,
     )
 }
 
@@ -359,26 +368,28 @@ internal fun VocabularyCard(
 private fun TermChip(label: String, onRemove: () -> Unit) {
     Row(
         modifier = Modifier
-            .clip(RoundedCornerShape(9.dp))
+            .height(ScribeSize.Chip)
+            .clip(ScribeShape.Chip)
             .background(ScribeColors.Key)
-            .padding(start = 9.dp, end = 2.dp, top = 4.dp, bottom = 4.dp),
+            .padding(start = 10.dp, end = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
             label,
             color = ScribeColors.Text,
-            fontSize = 12.sp,
+            fontSize = ScribeText.Body,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.widthIn(max = 190.dp),
         )
         Box(
             modifier = Modifier
+                .sizeIn(minWidth = ScribeSize.Chip, minHeight = ScribeSize.Chip)
                 .clip(CircleShape)
-                .clickable(onClick = onRemove)
-                .padding(4.dp),
+                .clickable(onClick = onRemove),
+            contentAlignment = Alignment.Center,
         ) {
-            Text("×", color = ScribeColors.Muted, fontSize = 14.sp)
+            Text("×", color = ScribeColors.Muted, fontSize = ScribeText.Label)
         }
     }
 }
@@ -395,7 +406,7 @@ internal fun ProcessingCard(
         Text(
             "Load the server profile to choose how dictation is processed.",
             color = ScribeColors.Muted,
-            fontSize = 12.sp,
+            fontSize = ScribeText.Body,
         )
         return
     }
@@ -406,21 +417,21 @@ internal fun ProcessingCard(
     val target = settings.processingTarget
     val targetMode = settings.processingModes.firstOrNull { it.value == target }
 
-    Text("Processing", color = ScribeColors.Text, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+    Text("Processing", color = ScribeColors.Text, fontSize = ScribeText.Body, fontWeight = FontWeight.Medium)
     Box(Modifier.fillMaxWidth()) {
         OutlinedButton(
             onClick = { open = true },
             enabled = !busy && target == null,
-            shape = RoundedCornerShape(12.dp),
-            modifier = Modifier.fillMaxWidth().height(52.dp),
+            shape = ScribeShape.Surface,
+            modifier = Modifier.fillMaxWidth().height(ScribeSize.Field),
         ) {
             Text(
                 current,
                 color = ScribeColors.Text,
-                fontSize = 14.sp,
+                fontSize = ScribeText.Label,
                 modifier = Modifier.weight(1f),
             )
-            Text("▾", color = ScribeColors.Muted, fontSize = 14.sp)
+            Text("▾", color = ScribeColors.Muted, fontSize = ScribeText.Label)
         }
         DropdownMenu(
             expanded = open,
@@ -444,7 +455,7 @@ internal fun ProcessingCard(
                             } else {
                                 "Needs ${formatBytes(mode.downloadBytes)} · ${mode.missing.size} models"
                             }
-                            Text(detail, color = ScribeColors.Muted, fontSize = 10.sp)
+                            Text(detail, color = ScribeColors.Muted, fontSize = ScribeText.Caption)
                         }
                     },
                     onClick = {
@@ -459,52 +470,52 @@ internal fun ProcessingCard(
         Text(
             "Downloading ${targetMode.label} models to the server.",
             color = ScribeColors.Text,
-            fontSize = 12.sp,
+            fontSize = ScribeText.Body,
         )
         LinearProgressIndicator(
             progress = { settings.downloadPercent / 100f },
             color = ScribeColors.Green,
             trackColor = ScribeColors.Key,
-            modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+            modifier = Modifier.fillMaxWidth().height(6.dp).clip(CircleShape),
         )
         Text(
             "${settings.downloadPercent}% · ${formatBytes(settings.downloadBytes)} / " +
                 formatBytes(settings.downloadTotal),
             color = ScribeColors.Muted,
-            fontSize = 11.sp,
+            fontSize = ScribeText.Body,
         )
         Text(
             "Dictation keeps using ${current} until the download finishes.",
             color = ScribeColors.Muted,
-            fontSize = 10.sp,
+            fontSize = ScribeText.Body,
         )
         OutlinedButton(
             onClick = onCancel,
             enabled = !busy,
-            shape = RoundedCornerShape(12.dp),
-            modifier = Modifier.fillMaxWidth().height(44.dp),
+            shape = ScribeShape.Surface,
+            modifier = Modifier.fillMaxWidth().height(ScribeSize.Tap),
         ) {
-            Text("Cancel download", fontSize = 12.sp)
+            Text("Cancel download")
         }
     }
     settings.processingError?.let { error ->
-        Text(error, color = ScribeColors.Error, fontSize = 11.sp)
+        Text(error, color = ScribeColors.Error, fontSize = ScribeText.Body)
     }
     if (target == null) {
         OutlinedButton(
             onClick = onRefresh,
             enabled = !busy,
-            shape = RoundedCornerShape(12.dp),
-            modifier = Modifier.fillMaxWidth().height(44.dp),
+            shape = ScribeShape.Surface,
+            modifier = Modifier.fillMaxWidth().height(ScribeSize.Tap),
         ) {
-            Text("Refresh server status", fontSize = 12.sp)
+            Text("Refresh server status")
         }
     }
     Text(
         "Cloud uses Superwhisper's servers. Offline and Offline Lite download " +
             "their models to the NAS and keep audio on the local network.",
         color = ScribeColors.Muted,
-        fontSize = 10.sp,
+        fontSize = ScribeText.Body,
     )
 }
 

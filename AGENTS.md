@@ -56,11 +56,14 @@ Two halves, two toolchains:
 - The keyboard opens compact (`KeyboardMode.COMPACT`) and resets to compact on
   every `onWindowShown`; the full layout is a temporary switch, not a
   preference. The top bar is the keyboard icon (tap toggles full QWERTY,
-  long-press opens Settings), the language code, **Dictate**, clipboard and —
-  in compact only — delete (hold repeats); the full layout carries its own
-  backspace in the letter row, so the bar hands that slot to Dictate. The
-  language and clipboard controls go inert and dim while a recording or a
-  transcription runs. Under it, `ScribePrefs.shortcuts` renders the
+  long-press opens Settings), the **Dictate** pill, clipboard and — in compact
+  only — delete (hold repeats); the full layout carries its own backspace in
+  the letter row, so the bar hands that slot to Dictate. The dictation language
+  is the pill's trailing segment, not a separate button: tapping it opens the
+  language panel, and for four seconds after a transcript it becomes `Undo`
+  (deleting the code points `handleTranscript` inserted). The clipboard control
+  goes inert and dim while a recording or a transcription runs. Under it,
+  `ScribePrefs.shortcuts` renders the
   configurable slash commands (`/goal`, `/compact` by default). The compact
   body is cursor arrows (hold repeats), space/enter, icon buttons for
   `Undo`/`Cut`/`Copy`/`Paste`, and a single horizontal clipboard strip of
@@ -68,19 +71,26 @@ Two halves, two toolchains:
   arrows, and vibration is intentionally off. There is no Local/Remote chip and
   no bottom transcript strip; do not bring them back.
 - The clipboard button opens a panel instead of the keyboard-switch key: one
-  grid of cards for every clip (text, `RECENT` transcript, image), with no
+  grid of cards for every clip (text, `DICTATION` transcript, image), with no
   separate text/image sections. Text commits with `commitText`, an image
   copies to `cacheDir/clipboard` and goes through the
   `${applicationId}.files` `FileProvider` with
   `InputConnectionCompat.commitContent(connection, editorInfo, …)`. Some fields
   reject content; show the error and keep the panel state sane.
-- The quick grid expands to `ClipboardView.FULL`: `ALL`/`TEXT`/`IMAGES`/`RECENT`
+- The quick grid expands to `ClipboardView.FULL`: `ALL`/`TEXT`/`IMAGES`/`DICTATION`
   filters, relative timestamps, long-press `Insert`/`Copy`/`Delete` (the picked
   card keeps a green outline and the rest dim; Delete is the error colour), and
   a two-tap `Clear all` that removes clips but keeps `RECENT` transcripts.
+  Cards are labelled `TEXT`, `IMAGE` or `DICTATION` from `clipKindLabel`; the
+  panel has no "System keyboard" action (Settings owns the picker) and an empty
+  filter names the kind that is missing.
   Search is deliberately v2: an IME-internal query needs the QWERTY routed to
   it instead of the app's `InputConnection`. Clipboard history is session-only;
   do not claim it survives process death.
+- The type, corner and row-height scale lives in `ui/Theme.kt`
+  (`ScribeText`, `ScribeShape`, `ScribeSize`): 28/20/17/14/12/10 sp,
+  8/12/21 dp, 40/44/48/52/96 dp. App code holds no other font-size, corner or
+  row-height literal; add a token instead.
 - The system's two-button keyboard bar (switch/hide) is drawn over the IME
   window, and the navigation-bar inset is reported as zero for
   `INPUT_METHOD` windows. Measure whether the IME window reaches the display
@@ -89,13 +99,15 @@ Two halves, two toolchains:
 - Audio: `WavRecorder` (16 kHz mono PCM16, `VOICE_RECOGNITION`), max 120 s.
   Delete the cache WAV on success/cancel and sweep stale files on service
   creation. Never leave a recording behind.
-- The language button opens the in-keyboard language panel (the full list,
-  auto-scrolled to the current code) and sends the selected code as `?lang=…`;
+- The language segment opens the in-keyboard language panel, centred on the
+  current code: a `COMMON` block from `COMMON_LANGUAGE_CODES`, then the rest
+  grouped by the first letter of the English name (Superwhisper's own order is
+  not alphabetical), with an A–Z rail. It sends the selected code as `?lang=…`;
   `SUPPORTED_LANGUAGES` is the 103 entries from Superwhisper 1.2.0,
   `prefs.language` persists the choice, and Settings uses a filterable dialog
-  over the same list. Do not put an editable search field in the IME panel: an
-  IME-internal query would need the QWERTY routed to it instead of the app's
-  `InputConnection`.
+  over `displayLanguages()`. Do not put an editable search field in the IME
+  panel: an IME-internal query would need the QWERTY routed to it instead of
+  the app's `InputConnection`.
 - Settings also edits the NAS profile: the tone is stored in `prefs.tone` and
   sent as `?tone=…` on every request; word chips and `heard → write`
   replacements are saved with one PUT; processing is a Cloud/Offline/Offline

@@ -25,7 +25,6 @@ data class ClipboardEntry(
     val text: String = "",
     val file: File? = null,
     val mime: String = "image/*",
-    val label: String = "",
     val source: String = "",
     val createdAt: Long = 0L,
 )
@@ -47,6 +46,10 @@ class ScribeUiState {
     var systemBarInsetPx by mutableIntStateOf(0)
     var clipboard by mutableStateOf<List<ClipboardEntry>>(emptyList())
     var shortcuts by mutableStateOf<List<String>>(emptyList())
+    /** Transient confirmation after a transcript lands, e.g. "Inserted". */
+    var notice by mutableStateOf<String?>(null)
+    /** Code points the last dictation inserted, so the notice can undo it. */
+    var noticeUndoCodePoints by mutableIntStateOf(0)
 }
 
 class ScribeActions(
@@ -68,10 +71,10 @@ class ScribeActions(
     val onExpandClipboard: () -> Unit,
     val onCloseClipboard: () -> Unit,
     val onInsertEntry: (ClipboardEntry) -> Unit,
+    val onUndoInsert: () -> Unit,
     val onDeleteEntry: (ClipboardEntry) -> Unit,
     val onClearClips: () -> Unit,
     val onCopyEntry: (ClipboardEntry) -> Unit,
-    val onSwitchKeyboard: () -> Unit,
     val onBackspace: () -> Unit,
     val onEnter: () -> Unit,
     val onText: (String) -> Unit,

@@ -10,6 +10,7 @@ import android.view.inputmethod.InputMethodManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,7 +26,6 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -50,6 +50,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -63,10 +64,10 @@ import kotlinx.coroutines.withContext
 import com.engin.warpandroidscribe.ConnectionMode
 import com.engin.warpandroidscribe.DictationTone
 import com.engin.warpandroidscribe.Replacement
-import com.engin.warpandroidscribe.ServerSettings
 import com.engin.warpandroidscribe.SUPPORTED_LANGUAGES
 import com.engin.warpandroidscribe.ScribeClient
 import com.engin.warpandroidscribe.ScribePrefs
+import com.engin.warpandroidscribe.ServerSettings
 import com.engin.warpandroidscribe.TONES
 import com.engin.warpandroidscribe.Vocabulary
 import com.engin.warpandroidscribe.isSupportedLanguage
@@ -96,7 +97,9 @@ fun SettingsScreen() {
     var vocabularyDirty by remember { mutableStateOf(false) }
     var serverBusy by remember { mutableStateOf(false) }
     var serverMessage by remember { mutableStateOf<String?>(null) }
+    var editingInactiveUrl by remember { mutableStateOf(false) }
     var imeEnabled by remember { mutableStateOf(isImeEnabled(context)) }
+    var imeActive by remember { mutableStateOf(isImeActive(context)) }
     var micGranted by remember { mutableStateOf(hasMicrophone(context)) }
     var localGranted by remember { mutableStateOf(hasLocalNetwork(context)) }
 
@@ -105,6 +108,7 @@ fun SettingsScreen() {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 imeEnabled = isImeEnabled(context)
+                imeActive = isImeActive(context)
                 micGranted = hasMicrophone(context)
                 localGranted = hasLocalNetwork(context)
             }
@@ -112,6 +116,11 @@ fun SettingsScreen() {
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
+
+    // The inactive URL is one line until the user asks to edit it, and the
+    // choice of mode resets that, so the field the mode uses is always the
+    // one on screen.
+    LaunchedEffect(mode) { editingInactiveUrl = false }
 
     val micPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -244,448 +253,528 @@ fun SettingsScreen() {
         }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(ScribeColors.Background)
-            .verticalScroll(rememberScrollState())
-            .statusBarsPadding()
-            .navigationBarsPadding()
-            .padding(horizontal = 18.dp, vertical = 18.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
+    Box(Modifier.fillMaxSize().background(ScribeColors.Background)) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .statusBarsPadding()
+                .padding(horizontal = 18.dp)
+                .padding(top = 18.dp, bottom = 150.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    text = "Warp Scribe",
-                    color = ScribeColors.Text,
-                    fontSize = 28.sp,
-                    fontWeight = FontWeight.Bold,
-                )
-                Text(
-                    text = "Dictation for Android",
-                    color = ScribeColors.Muted,
-                    fontSize = 13.sp,
-                )
-            }
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(if (imeEnabled) ScribeColors.Green.copy(alpha = 0.15f) else ScribeColors.Key)
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    text = if (imeEnabled) "ACTIVE" else "SETUP",
-                    color = if (imeEnabled) ScribeColors.Green else ScribeColors.Muted,
-                    fontSize = 9.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    letterSpacing = 1.sp,
-                )
-            }
-        }
-
-        SettingsCard("SERVER") {
-            Text("Mode", color = ScribeColors.Text, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(
-                    selected = mode == ConnectionMode.LOCAL,
-                    onClick = { mode = ConnectionMode.LOCAL },
-                    label = { Text("Local") },
-                )
-                FilterChip(
-                    selected = mode == ConnectionMode.REMOTE,
-                    onClick = { mode = ConnectionMode.REMOTE },
-                    label = { Text("Remote") },
-                )
-            }
-            OutlinedTextField(
-                value = localUrl,
-                onValueChange = { localUrl = it },
-                label = { Text("Local URL") },
-                placeholder = { Text("http://<nas-lan>:8787") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            OutlinedTextField(
-                value = remoteUrl,
-                onValueChange = { remoteUrl = it },
-                label = { Text("Remote URL") },
-                placeholder = { Text("https://<nas-host>") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            OutlinedTextField(
-                value = token,
-                onValueChange = { token = it },
-                label = { Text("Bearer token") },
-                singleLine = true,
-                visualTransformation = PasswordVisualTransformation(),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Text(
-                text = "The same token is used by both modes. Both URLs are stored; " +
-                    "only the selected mode is used.",
-                color = ScribeColors.Muted,
-                fontSize = 11.sp,
-            )
-            OutlinedButton(
-                onClick = { refreshServer(showMessage = true) },
-                enabled = !serverBusy,
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth().height(44.dp),
-            ) {
-                Text(if (serverBusy) "Loading profile…" else "Refresh server profile", fontSize = 12.sp)
-            }
-            serverMessage?.let {
-                Text(it, color = ScribeColors.Muted, fontSize = 11.sp)
-            }
-        }
-
-        SettingsCard("DICTATION") {
-            Text("Language", color = ScribeColors.Text, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-            OutlinedButton(
-                onClick = { languagePickerOpen = true },
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth().height(52.dp),
-            ) {
-                Text(
-                    text = languageName(language),
-                    color = ScribeColors.Text,
-                    fontSize = 14.sp,
-                    textAlign = TextAlign.Start,
-                    modifier = Modifier.weight(1f),
-                )
-                Text("▾", color = ScribeColors.Muted, fontSize = 14.sp)
-            }
-            Text(
-                "Search ${languages.size} languages in the picker.",
-                color = ScribeColors.Muted,
-                fontSize = 10.sp,
-            )
-            Text("Tone", color = ScribeColors.Text, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-            TonePicker(
-                value = tone,
-                options = toneChoices(server),
-                onSelect = { tone = it },
-            )
-            Text(
-                "Casual is lowercase, formal expands contractions. The cleanup model applies it.",
-                color = ScribeColors.Muted,
-                fontSize = 10.sp,
-            )
-            if (languagePickerOpen) {
-                LanguagePickerDialog(
-                    selected = language,
-                    languages = languages,
-                    onSelect = {
-                        language = it
-                        languagePickerOpen = false
-                    },
-                    onDismiss = { languagePickerOpen = false },
-                )
-            }
-            OutlinedTextField(
-                value = shortcuts,
-                onValueChange = { shortcuts = it },
-                label = { Text("Slash commands") },
-                placeholder = { Text("/goal, /compact") },
-                singleLine = true,
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Text(
-                text = "Comma-separated commands shown above the keyboard. Tap one to insert it. " +
-                    "Leave empty to hide the row.",
-                color = ScribeColors.Muted,
-                fontSize = 11.sp,
-            )
-        }
-
-        SettingsCard("VOCABULARY") {
-            VocabularyCard(
-                vocabulary = vocabulary,
-                busy = serverBusy,
-                onAddTerm = { term ->
-                    vocabulary?.let { current ->
-                        vocabularyDirty = true
-                        vocabulary = current.copy(
-                            terms = (current.terms + term).distinct(),
-                        )
-                    }
-                },
-                onRemoveTerm = { term ->
-                    vocabulary?.let { current ->
-                        vocabularyDirty = true
-                        vocabulary = current.copy(terms = current.terms - term)
-                    }
-                },
-                onAddReplacement = { original, with ->
-                    vocabulary?.let { current ->
-                        vocabularyDirty = true
-                        vocabulary = current.copy(
-                            replacements = current.replacements
-                                .filterNot { it.original == original } +
-                                Replacement(original, with),
-                        )
-                    }
-                },
-                onRemoveReplacement = { original ->
-                    vocabulary?.let { current ->
-                        vocabularyDirty = true
-                        vocabulary = current.copy(
-                            replacements = current.replacements
-                                .filterNot { it.original == original },
-                        )
-                    }
-                },
-                onSave = {
-                    vocabulary?.let { current ->
-                        scope.launch {
-                            serverBusy = true
-                            val result = withContext(Dispatchers.IO) {
-                                runCatching { ScribeClient(prefs).saveVocabulary(current) }
-                            }
-                            result.onSuccess { snapshot ->
-                                vocabularyDirty = false
-                                applyServer(snapshot)
-                                serverMessage = "Vocabulary saved."
-                            }.onFailure { error ->
-                                serverMessage = "Vocabulary was not saved: ${error.message}"
-                            }
-                            serverBusy = false
-                        }
-                    }
-                },
-            )
-        }
-
-        SettingsCard("PROCESSING") {
-            ProcessingCard(
-                settings = server,
-                busy = serverBusy,
-                onSelect = { selected ->
-                    if (selected != server?.processing) {
-                        scope.launch {
-                            serverBusy = true
-                            val result = withContext(Dispatchers.IO) {
-                                runCatching { ScribeClient(prefs).setProcessing(selected) }
-                            }
-                            result.onSuccess { snapshot ->
-                                applyServer(snapshot)
-                                serverMessage = "Processing set to ${snapshot.processing}."
-                            }.onFailure { error ->
-                                serverMessage = "Processing change failed: ${error.message}"
-                            }
-                            serverBusy = false
-                        }
-                    }
-                },
-                onCancel = {
-                    scope.launch {
-                        serverBusy = true
-                        val result = withContext(Dispatchers.IO) {
-                            runCatching { ScribeClient(prefs).setProcessing("cloud") }
-                        }
-                        result.onSuccess { applyServer(it) }
-                            .onFailure { serverMessage = "Cancel failed: ${it.message}" }
-                        serverBusy = false
-                    }
-                },
-                onRefresh = { refreshServer(showMessage = true) },
-            )
-        }
-
-        SettingsCard("KEYBOARD") {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(10.dp)
-                        .clip(CircleShape)
-                        .background(if (imeEnabled) ScribeColors.Green else ScribeColors.Muted),
-                )
-                Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
                     Text(
-                        text = "Warp Scribe keyboard",
+                        text = "Warp Scribe",
                         color = ScribeColors.Text,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.SemiBold,
+                        fontSize = ScribeText.PageTitle,
+                        fontWeight = FontWeight.Bold,
                     )
                     Text(
-                        text = if (imeEnabled) {
-                            "Enabled and ready"
-                        } else {
-                            "Enable it to start dictating"
-                        },
-                        color = if (imeEnabled) ScribeColors.Green else ScribeColors.Muted,
-                        fontSize = 11.sp,
+                        text = "Dictation for Android",
+                        color = ScribeColors.Muted,
+                        fontSize = ScribeText.Label,
                     )
                 }
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(
-                            if (imeEnabled) {
-                                ScribeColors.Green.copy(alpha = 0.15f)
-                            } else {
-                                ScribeColors.Key
-                            },
+                StateBadge(active = imeActive, enabled = imeEnabled)
+            }
+
+            SettingsCard("SERVER") {
+                Text("Mode", color = ScribeColors.Text, fontSize = ScribeText.Body, fontWeight = FontWeight.Medium)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = mode == ConnectionMode.LOCAL,
+                        onClick = { mode = ConnectionMode.LOCAL },
+                        label = { Text("Local") },
+                    )
+                    FilterChip(
+                        selected = mode == ConnectionMode.REMOTE,
+                        onClick = { mode = ConnectionMode.REMOTE },
+                        label = { Text("Remote") },
+                    )
+                }
+                val localActive = mode == ConnectionMode.LOCAL
+                OutlinedTextField(
+                    value = if (localActive) localUrl else remoteUrl,
+                    onValueChange = {
+                        if (localActive) localUrl = it else remoteUrl = it
+                    },
+                    label = { Text(if (localActive) "Local URL" else "Remote URL") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                    shape = ScribeShape.Surface,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                val otherLabel = if (localActive) "Remote URL" else "Local URL"
+                val otherValue = if (localActive) remoteUrl else localUrl
+                if (editingInactiveUrl) {
+                    OutlinedTextField(
+                        value = otherValue,
+                        onValueChange = {
+                            if (localActive) remoteUrl = it else localUrl = it
+                        },
+                        label = { Text(otherLabel) },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                        shape = ScribeShape.Surface,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                } else {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(ScribeSize.Tap)
+                            .clip(ScribeShape.Surface)
+                            .background(ScribeColors.Key)
+                            .combinedClickable { editingInactiveUrl = true }
+                            .padding(horizontal = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                text = "$otherLabel · not in use",
+                                color = ScribeColors.Muted,
+                                fontSize = ScribeText.Caption,
+                            )
+                            Text(
+                                text = otherValue,
+                                color = ScribeColors.Muted,
+                                fontSize = ScribeText.Body,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        Text(
+                            text = "Edit",
+                            color = ScribeColors.Text,
+                            fontSize = ScribeText.Body,
+                            fontWeight = FontWeight.Medium,
                         )
-                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                    }
+                }
+                OutlinedTextField(
+                    value = token,
+                    onValueChange = { token = it },
+                    label = { Text("Bearer token") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    shape = ScribeShape.Surface,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedButton(
+                    onClick = { refreshServer(showMessage = true) },
+                    enabled = !serverBusy,
+                    shape = ScribeShape.Surface,
+                    modifier = Modifier.fillMaxWidth().height(ScribeSize.Tap),
                 ) {
+                    Text(if (serverBusy) "Loading profile…" else "Refresh server profile")
+                }
+                serverMessage?.let {
                     Text(
-                        text = if (imeEnabled) "ON" else "OFF",
-                        color = if (imeEnabled) ScribeColors.Green else ScribeColors.Muted,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        letterSpacing = 1.sp,
+                        it,
+                        color = if (isErrorMessage(it)) ScribeColors.Error else ScribeColors.Muted,
+                        fontSize = ScribeText.Body,
                     )
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (imeEnabled) {
+
+            SettingsCard("DICTATION") {
+                Text("Language", color = ScribeColors.Text, fontSize = ScribeText.Body, fontWeight = FontWeight.Medium)
+                OutlinedButton(
+                    onClick = { languagePickerOpen = true },
+                    shape = ScribeShape.Surface,
+                    modifier = Modifier.fillMaxWidth().height(ScribeSize.Field),
+                ) {
+                    Text(
+                        text = languageName(language),
+                        color = ScribeColors.Text,
+                        fontSize = ScribeText.Label,
+                        textAlign = TextAlign.Start,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text("▾", color = ScribeColors.Muted, fontSize = ScribeText.Label)
+                }
+                Text("Tone", color = ScribeColors.Text, fontSize = ScribeText.Body, fontWeight = FontWeight.Medium)
+                TonePicker(
+                    value = tone,
+                    options = toneChoices(server),
+                    onSelect = { tone = it },
+                )
+                Text(
+                    "Casual is lowercase, formal expands contractions. The cleanup model applies it.",
+                    color = ScribeColors.Muted,
+                    fontSize = ScribeText.Body,
+                )
+                if (languagePickerOpen) {
+                    LanguagePickerDialog(
+                        selected = language,
+                        languages = languages,
+                        onSelect = {
+                            language = it
+                            languagePickerOpen = false
+                        },
+                        onDismiss = { languagePickerOpen = false },
+                    )
+                }
+                OutlinedTextField(
+                    value = shortcuts,
+                    onValueChange = { shortcuts = it },
+                    label = { Text("Quick inserts") },
+                    placeholder = { Text("/goal, /compact") },
+                    singleLine = true,
+                    shape = ScribeShape.Surface,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    text = "Comma-separated words or commands shown above the keyboard. " +
+                        "Tap one to insert it. Leave empty to hide the row.",
+                    color = ScribeColors.Muted,
+                    fontSize = ScribeText.Body,
+                )
+            }
+
+            SettingsCard("VOCABULARY") {
+                VocabularyCard(
+                    vocabulary = vocabulary,
+                    busy = serverBusy,
+                    onAddTerm = { term ->
+                        vocabulary?.let { current ->
+                            vocabularyDirty = true
+                            vocabulary = current.copy(
+                                terms = (current.terms + term).distinct(),
+                            )
+                        }
+                    },
+                    onRemoveTerm = { term ->
+                        vocabulary?.let { current ->
+                            vocabularyDirty = true
+                            vocabulary = current.copy(terms = current.terms - term)
+                        }
+                    },
+                    onAddReplacement = { original, with ->
+                        vocabulary?.let { current ->
+                            vocabularyDirty = true
+                            vocabulary = current.copy(
+                                replacements = current.replacements
+                                    .filterNot { it.original == original } +
+                                    Replacement(original, with),
+                            )
+                        }
+                    },
+                    onRemoveReplacement = { original ->
+                        vocabulary?.let { current ->
+                            vocabularyDirty = true
+                            vocabulary = current.copy(
+                                replacements = current.replacements
+                                    .filterNot { it.original == original },
+                            )
+                        }
+                    },
+                    onSave = {
+                        vocabulary?.let { current ->
+                            scope.launch {
+                                serverBusy = true
+                                val result = withContext(Dispatchers.IO) {
+                                    runCatching { ScribeClient(prefs).saveVocabulary(current) }
+                                }
+                                result.onSuccess { snapshot ->
+                                    vocabularyDirty = false
+                                    applyServer(snapshot)
+                                    serverMessage = "Vocabulary saved."
+                                }.onFailure { error ->
+                                    serverMessage = "Vocabulary was not saved: ${error.message}"
+                                }
+                                serverBusy = false
+                            }
+                        }
+                    },
+                )
+            }
+
+            SettingsCard("PROCESSING") {
+                ProcessingCard(
+                    settings = server,
+                    busy = serverBusy,
+                    onSelect = { selected ->
+                        if (selected != server?.processing) {
+                            scope.launch {
+                                serverBusy = true
+                                val result = withContext(Dispatchers.IO) {
+                                    runCatching { ScribeClient(prefs).setProcessing(selected) }
+                                }
+                                result.onSuccess { snapshot ->
+                                    applyServer(snapshot)
+                                    serverMessage = "Processing set to ${snapshot.processing}."
+                                }.onFailure { error ->
+                                    serverMessage = "Processing change failed: ${error.message}"
+                                }
+                                serverBusy = false
+                            }
+                        }
+                    },
+                    onCancel = {
+                        scope.launch {
+                            serverBusy = true
+                            val result = withContext(Dispatchers.IO) {
+                                runCatching { ScribeClient(prefs).setProcessing("cloud") }
+                            }
+                            result.onSuccess { applyServer(it) }
+                                .onFailure { serverMessage = "Cancel failed: ${it.message}" }
+                            serverBusy = false
+                        }
+                    },
+                    onRefresh = { refreshServer(showMessage = true) },
+                )
+            }
+
+            SettingsCard("KEYBOARD") {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .clip(CircleShape)
+                            .background(if (imeActive) ScribeColors.Green else ScribeColors.Muted),
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            text = "Warp Scribe keyboard",
+                            color = ScribeColors.Text,
+                            fontSize = ScribeText.Label,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            text = when {
+                                imeActive -> "In use as the current keyboard"
+                                imeEnabled -> "Enabled, not the current keyboard"
+                                else -> "Enable it to start dictating"
+                            },
+                            color = if (imeActive) ScribeColors.Green else ScribeColors.Muted,
+                            fontSize = ScribeText.Body,
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .clip(ScribeShape.Pill)
+                            .background(
+                                if (imeEnabled) {
+                                    ScribeColors.Green.copy(alpha = 0.15f)
+                                } else {
+                                    ScribeColors.Key
+                                },
+                            )
+                            .padding(horizontal = 12.dp, vertical = 7.dp),
+                    ) {
+                        Text(
+                            text = if (imeEnabled) "ON" else "OFF",
+                            color = if (imeEnabled) ScribeColors.Green else ScribeColors.Muted,
+                            fontSize = ScribeText.Caption,
+                            fontWeight = FontWeight.SemiBold,
+                            letterSpacing = 1.sp,
+                        )
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (imeEnabled) {
+                        Button(
+                            onClick = {
+                                val manager =
+                                    context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+                                manager.showInputMethodPicker()
+                            },
+                            shape = ScribeShape.Surface,
+                            modifier = Modifier.weight(1f).height(ScribeSize.Tap),
+                        ) {
+                            Text("Choose keyboard")
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                context.startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
+                            },
+                            shape = ScribeShape.Surface,
+                            modifier = Modifier.weight(1f).height(ScribeSize.Tap),
+                        ) {
+                            Text("Keyboard settings")
+                        }
+                    } else {
+                        Button(
+                            onClick = {
+                                context.startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
+                            },
+                            shape = ScribeShape.Surface,
+                            modifier = Modifier.weight(1f).height(ScribeSize.Tap),
+                        ) {
+                            Text("Enable keyboard")
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                val manager =
+                                    context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+                                manager.showInputMethodPicker()
+                            },
+                            shape = ScribeShape.Surface,
+                            modifier = Modifier.weight(1f).height(ScribeSize.Tap),
+                        ) {
+                            Text("Choose keyboard")
+                        }
+                    }
+                }
+            }
+
+            SettingsCard("PERMISSIONS") {
+                Text("Local network", color = ScribeColors.Text, fontSize = ScribeText.Body, fontWeight = FontWeight.Medium)
+                val localOk = Build.VERSION.SDK_INT < 37 || localGranted
+                Text(
+                    text = when {
+                        Build.VERSION.SDK_INT < 37 -> "Not required on this Android version."
+                        mode == ConnectionMode.REMOTE -> "Not required in Remote mode."
+                        localOk -> "Granted."
+                        else -> "Required for Local mode."
+                    },
+                    color = if (localOk || mode == ConnectionMode.REMOTE) ScribeColors.Muted else ScribeColors.Error,
+                    fontSize = ScribeText.Body,
+                )
+                if (Build.VERSION.SDK_INT >= 37 && !localGranted) {
                     Button(
-                        onClick = {
-                            val manager =
-                                context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
-                            manager.showInputMethodPicker()
-                        },
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.weight(1f).height(46.dp),
+                        onClick = { localPermission.launch(Manifest.permission.ACCESS_LOCAL_NETWORK) },
+                        shape = ScribeShape.Surface,
+                        modifier = Modifier.fillMaxWidth().height(ScribeSize.Tap),
                     ) {
-                        Text("Choose keyboard", fontSize = 12.sp)
+                        Text("Grant local network")
                     }
-                    OutlinedButton(
-                        onClick = {
-                            context.startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
-                        },
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.weight(1f).height(46.dp),
-                    ) {
-                        Text("Keyboard settings", fontSize = 12.sp)
-                    }
-                } else {
+                }
+                Spacer(Modifier.height(2.dp))
+                Text("Microphone", color = ScribeColors.Text, fontSize = ScribeText.Body, fontWeight = FontWeight.Medium)
+                Text(
+                    text = if (micGranted) "Granted." else "Missing; dictation cannot start.",
+                    color = if (micGranted) ScribeColors.Muted else ScribeColors.Error,
+                    fontSize = ScribeText.Body,
+                )
+                if (!micGranted) {
                     Button(
-                        onClick = {
-                            context.startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
-                        },
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.weight(1f).height(46.dp),
+                        onClick = { micPermission.launch(Manifest.permission.RECORD_AUDIO) },
+                        shape = ScribeShape.Surface,
+                        modifier = Modifier.fillMaxWidth().height(ScribeSize.Tap),
                     ) {
-                        Text("Enable keyboard", fontSize = 12.sp)
-                    }
-                    OutlinedButton(
-                        onClick = {
-                            val manager =
-                                context.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
-                            manager.showInputMethodPicker()
-                        },
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.weight(1f).height(46.dp),
-                    ) {
-                        Text("Choose keyboard", fontSize = 12.sp)
+                        Text("Grant microphone")
                     }
                 }
             }
-        }
 
-        SettingsCard("PERMISSIONS") {
-            Text("Local network", color = ScribeColors.Text, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-            val localOk = Build.VERSION.SDK_INT < 37 || localGranted
             Text(
-                text = when {
-                    Build.VERSION.SDK_INT < 37 -> "Not required on this Android version."
-                    mode == ConnectionMode.REMOTE -> "Not required in Remote mode."
-                    localOk -> "Granted."
-                    else -> "Required for Local mode."
-                },
-                color = if (localOk || mode == ConnectionMode.REMOTE) ScribeColors.Muted else ScribeColors.Error,
-                fontSize = 11.sp,
+                text = "Server URLs and the token are stored in this app's private storage. " +
+                    "The keyboard uses the selected mode, language and tone the next time it opens.",
+                color = ScribeColors.Muted,
+                fontSize = ScribeText.Body,
             )
-            if (Build.VERSION.SDK_INT >= 37 && !localGranted) {
-                Button(
-                    onClick = { localPermission.launch(Manifest.permission.ACCESS_LOCAL_NETWORK) },
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth().height(44.dp),
-                ) {
-                    Text("Grant local network", fontSize = 12.sp)
-                }
-            }
-            Spacer(Modifier.height(2.dp))
-            Text("Microphone", color = ScribeColors.Text, fontSize = 12.sp, fontWeight = FontWeight.Medium)
             Text(
-                text = if (micGranted) "Granted." else "Missing; dictation cannot start.",
-                color = if (micGranted) ScribeColors.Muted else ScribeColors.Error,
-                fontSize = 11.sp,
-            )
-            if (!micGranted) {
-                Button(
-                    onClick = { micPermission.launch(Manifest.permission.RECORD_AUDIO) },
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth().height(44.dp),
-                ) {
-                    Text("Grant microphone", fontSize = 12.sp)
-                }
-            }
-        }
-
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(
-                onClick = { if (save()) message = "Saved." },
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.weight(1f).height(48.dp),
-            ) {
-                Text("Save", fontSize = 13.sp)
-            }
-            OutlinedButton(
-                onClick = { testServer() },
-                enabled = !busy,
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.weight(1f).height(48.dp),
-            ) {
-                Text(if (busy) "Testing…" else "Save & test", fontSize = 13.sp)
-            }
-        }
-
-        message?.let {
-            Text(
-                text = it,
-                color = if (it.contains("error", ignoreCase = true) ||
-                    it.contains("required", ignoreCase = true) ||
-                    it.contains("denied", ignoreCase = true) ||
-                    it.contains("failed", ignoreCase = true) ||
-                    it.contains("missing", ignoreCase = true) ||
-                    it.contains("could not", ignoreCase = true)
-                ) {
-                    ScribeColors.Error
-                } else {
-                    ScribeColors.Green
-                },
-                fontSize = 12.sp,
+                text = "warp-android-scribe · ${appVersion(context)}",
+                color = ScribeColors.Muted,
+                fontSize = ScribeText.Caption,
             )
         }
 
-        Text(
-            text = "Server URLs and the token are stored in this app's private storage. " +
-                "The keyboard uses the selected mode, language and tone the next time it opens.",
-            color = ScribeColors.Muted,
-            fontSize = 11.sp,
-        )
-        Text(
-            text = "warp-android-scribe · ${appVersion(context)}",
-            color = ScribeColors.Muted,
-            fontSize = 10.sp,
+        SaveBar(
+            message = message,
+            busy = busy,
+            onSave = { if (save()) message = "Saved." },
+            onTest = { testServer() },
+            modifier = Modifier.align(Alignment.BottomCenter),
         )
     }
 }
+
+/** Enabled is not the same as being the keyboard that takes input. */
+@Composable
+private fun StateBadge(active: Boolean, enabled: Boolean) {
+    val label = when {
+        active -> "ACTIVE"
+        enabled -> "ENABLED"
+        else -> "SETUP"
+    }
+    Box(
+        modifier = Modifier
+            .clip(ScribeShape.Pill)
+            .background(
+                if (active) ScribeColors.Green.copy(alpha = 0.15f) else ScribeColors.Key,
+            )
+            .padding(horizontal = 12.dp, vertical = 7.dp),
+    ) {
+        Text(
+            text = label,
+            color = when {
+                active -> ScribeColors.Green
+                enabled -> ScribeColors.Text
+                else -> ScribeColors.Muted
+            },
+            fontSize = ScribeText.Caption,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 1.sp,
+        )
+    }
+}
+
+/**
+ * Save sat at the end of a seven-card scroll, three screens below the token
+ * field it saves. It lives at the bottom of the screen now, with the result
+ * message beside it.
+ */
+@Composable
+private fun SaveBar(
+    message: String?,
+    busy: Boolean,
+    onSave: () -> Unit,
+    onTest: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(ScribeColors.Surface)
+            .navigationBarsPadding()
+            .padding(horizontal = 18.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        message?.let {
+            Text(
+                text = it,
+                color = if (isErrorMessage(it)) ScribeColors.Error else ScribeColors.Green,
+                fontSize = ScribeText.Caption,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = onSave,
+                shape = ScribeShape.Surface,
+                modifier = Modifier.weight(1f).height(ScribeSize.Tap),
+            ) {
+                Text("Save")
+            }
+            OutlinedButton(
+                onClick = onTest,
+                enabled = !busy,
+                shape = ScribeShape.Surface,
+                modifier = Modifier.weight(1f).height(ScribeSize.Tap),
+            ) {
+                Text(if (busy) "Testing…" else "Save & test")
+            }
+        }
+    }
+}
+
+private fun isErrorMessage(message: String): Boolean =
+    message.contains("error", ignoreCase = true) ||
+        message.contains("required", ignoreCase = true) ||
+        message.contains("denied", ignoreCase = true) ||
+        message.contains("failed", ignoreCase = true) ||
+        message.contains("missing", ignoreCase = true) ||
+        message.contains("could not", ignoreCase = true)
 
 private fun toneChoices(settings: ServerSettings?): List<DictationTone> =
     settings?.tones
@@ -701,6 +790,14 @@ private fun isImeEnabled(context: Context): Boolean {
         manager.enabledInputMethodList.any { it.packageName == context.packageName }
     }.getOrDefault(false)
 }
+
+private fun isImeActive(context: Context): Boolean = runCatching {
+    val current = Settings.Secure.getString(
+        context.contentResolver,
+        Settings.Secure.DEFAULT_INPUT_METHOD,
+    )
+    current?.startsWith("${context.packageName}/") == true
+}.getOrDefault(false)
 
 private fun hasMicrophone(context: Context): Boolean =
     ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
