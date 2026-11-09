@@ -75,6 +75,7 @@ class ScribeImeService : InputMethodService() {
             onDismissError = ::dismissError,
             onSettings = ::openSettings,
             onToggleLanguage = ::toggleLanguagePicker,
+            onToggleEmoji = ::toggleEmoji,
             onSelectLanguage = ::selectLanguage,
             onToggleLayout = ::toggleLayout,
             onUndo = ::undo,
@@ -92,6 +93,7 @@ class ScribeImeService : InputMethodService() {
             onCopyEntry = ::copyEntry,
             onBackspace = ::backspace,
             onEnter = ::enter,
+            onEmoji = ::insertEmoji,
             onText = ::insertText,
         )
     }
@@ -104,6 +106,8 @@ class ScribeImeService : InputMethodService() {
         clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         ui.language = prefs.language
         ui.shortcuts = prefs.shortcuts
+        ui.emojiUsage = prefs.emojiUsage()
+        ui.emojiGroups = loadEmojiGroups(this)
         ui.layout = KeyboardMode.COMPACT
         cleanupOldRecordings()
         cleanupClipboardCache()
@@ -139,6 +143,7 @@ class ScribeImeService : InputMethodService() {
         super.onWindowShown()
         ui.layout = KeyboardMode.COMPACT
         ui.showLanguages = false
+        ui.showEmoji = false
         installSystemBarInsetListener()
         updateSystemBarInset()
     }
@@ -147,6 +152,10 @@ class ScribeImeService : InputMethodService() {
         if (keyCode == KeyEvent.KEYCODE_BACK) {
             if (ui.showLanguages) {
                 ui.showLanguages = false
+                return true
+            }
+            if (ui.showEmoji) {
+                ui.showEmoji = false
                 return true
             }
             if (ui.clipboardView != ClipboardView.HIDDEN) {
@@ -242,6 +251,7 @@ class ScribeImeService : InputMethodService() {
         ui.clipboard = buildClipboard()
         ui.clipboardView = ClipboardView.HIDDEN
         ui.showLanguages = false
+        ui.showEmoji = false
         ui.canRetry = pendingFile != null
         if (ui.phase != Phase.RECORDING && ui.phase != Phase.TRANSCRIBING) {
             ui.phase = if (pendingFile != null) Phase.ERROR else Phase.IDLE
@@ -259,6 +269,7 @@ class ScribeImeService : InputMethodService() {
         unregisterClipboard()
         ui.clipboardView = ClipboardView.HIDDEN
         ui.showLanguages = false
+        ui.showEmoji = false
         clearNotice()
         if (finishingInput) {
             cancelActiveWork()
@@ -523,6 +534,7 @@ class ScribeImeService : InputMethodService() {
         clearNotice()
         ui.clipboardView = ClipboardView.HIDDEN
         ui.showLanguages = false
+        ui.showEmoji = false
     }
 
     private fun dismissError() {
@@ -541,12 +553,21 @@ class ScribeImeService : InputMethodService() {
         clearNotice()
         ui.clipboardView = ClipboardView.HIDDEN
         ui.showLanguages = false
+        ui.showEmoji = false
     }
 
     private fun toggleLanguagePicker() {
         if (ui.phase == Phase.RECORDING || ui.phase == Phase.TRANSCRIBING) return
         ui.clipboardView = ClipboardView.HIDDEN
+        ui.showEmoji = false
         ui.showLanguages = !ui.showLanguages
+    }
+
+    private fun toggleEmoji() {
+        if (ui.phase == Phase.RECORDING || ui.phase == Phase.TRANSCRIBING) return
+        ui.clipboardView = ClipboardView.HIDDEN
+        ui.showLanguages = false
+        ui.showEmoji = !ui.showEmoji
     }
 
     private fun selectLanguage(code: String) {
@@ -558,6 +579,7 @@ class ScribeImeService : InputMethodService() {
 
     private fun toggleLayout() {
         ui.showLanguages = false
+        ui.showEmoji = false
         ui.layout = if (ui.layout == KeyboardMode.COMPACT) {
             KeyboardMode.FULL
         } else {
@@ -635,6 +657,7 @@ class ScribeImeService : InputMethodService() {
         // matching gate for anything that still reaches it.
         if (ui.phase == Phase.RECORDING || ui.phase == Phase.TRANSCRIBING) return
         ui.showLanguages = false
+        ui.showEmoji = false
         if (ui.clipboardView == ClipboardView.QUICK) {
             ui.clipboardView = ClipboardView.HIDDEN
             return
@@ -648,6 +671,7 @@ class ScribeImeService : InputMethodService() {
     private fun expandClipboard() {
         if (ui.phase == Phase.RECORDING || ui.phase == Phase.TRANSCRIBING) return
         ui.showLanguages = false
+        ui.showEmoji = false
         ui.clipboardView = ClipboardView.FULL
         refreshClipboard()
         ui.clipboard = buildClipboard()
@@ -775,6 +799,15 @@ class ScribeImeService : InputMethodService() {
     private fun insertText(text: String) {
         if (text.isEmpty()) return
         currentInputConnection?.commitText(text, 1)
+        haptic(HapticFeedbackConstants.KEYBOARD_TAP)
+    }
+
+    /** An emoji tap both commits and teaches the panel's most-used row. */
+    private fun insertEmoji(emoji: String) {
+        if (emoji.isEmpty()) return
+        val connection = currentInputConnection ?: return
+        connection.commitText(emoji, 1)
+        ui.emojiUsage = prefs.recordEmojiUse(emoji)
         haptic(HapticFeedbackConstants.KEYBOARD_TAP)
     }
 

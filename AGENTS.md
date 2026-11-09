@@ -55,25 +55,29 @@ Two halves, two toolchains:
   service; the UI is a pure function of it and `ScribeActions`.
 - The keyboard opens compact (`KeyboardMode.COMPACT`) and resets to compact on
   every `onWindowShown`; the full layout is a temporary switch, not a
-  preference. The top bar is the keyboard icon (tap toggles full QWERTY,
-  long-press opens Settings), the **Dictate** pill, clipboard and — in compact
-  only — delete (hold repeats); the full layout carries its own backspace in
-  the letter row, so the bar hands that slot to Dictate. The dictation language
-  is the pill's trailing segment, not a separate button: tapping it opens the
+  preference. The error line is the keyboard's first row; under it the
+  clipboard bar, then the top bar. The clipboard bar never disappears with the
+  keys, so its button stays reachable while a panel is open. The top bar is the
+  keyboard icon (tap toggles full QWERTY, long-press opens Settings), the
+  **Dictate** pill and delete (hold repeats) to its right in both layouts; no
+  letter or symbol row carries a second backspace. The dictation language is
+  the pill's trailing segment, not a separate button: tapping it opens the
   language panel, and for four seconds after a transcript it becomes `Undo`
-  (deleting the code points `handleTranscript` inserted). The clipboard control
-  goes inert and dim while a recording or a transcription runs. Under it,
-  `ScribePrefs.shortcuts` renders the
-  configurable slash commands (`/goal`, `/compact` by default). The compact
-  body is cursor arrows (hold repeats), space/enter, icon buttons for
-  `Undo`/`Cut`/`Copy`/`Paste`, and a single horizontal clipboard strip of
-  boxes; no punctuation row, no fixed starter row, no backspace beside the
-  arrows, and vibration is intentionally off. There is no Local/Remote chip and
-  no bottom transcript strip; do not bring them back.
-- The clipboard button opens a panel instead of the keyboard-switch key: one
-  grid of cards for every clip (text, `DICTATION` transcript, image), with no
-  separate text/image sections. Text commits with `commitText`, an image
-  copies to `cacheDir/clipboard` and goes through the
+  (deleting the code points `handleTranscript` inserted). Under it,
+  `ScribePrefs.shortcuts` renders the configurable slash commands (`/goal`,
+  `/compact` by default). The compact body is cursor arrows (hold repeats),
+  space, the emoji key and enter, then icon buttons for
+  `Undo`/`Cut`/`Copy`/`Paste`; no punctuation row, no fixed starter row, no
+  backspace beside the arrows, and vibration is intentionally off. The
+  clipboard bar (above the top bar) is the clipboard button at the far left,
+  then the single horizontal strip of clips (`No clips yet` when empty). There
+  is no Local/Remote chip and no bottom transcript strip; do not bring them
+  back.
+- The clipboard button opens a panel: one grid of cards for every clip (text,
+  `DICTATION` transcript, image), with no separate text/image sections. It is
+  the clipboard bar's first control, above the top bar, and it goes inert and
+  dim while a recording or a transcription runs. Text commits with
+  `commitText`, an image copies to `cacheDir/clipboard` and goes through the
   `${applicationId}.files` `FileProvider` with
   `InputConnectionCompat.commitContent(connection, editorInfo, …)`. Some fields
   reject content; show the error and keep the panel state sane.
@@ -108,6 +112,17 @@ Two halves, two toolchains:
   over `displayLanguages()`. Do not put an editable search field in the IME
   panel: an IME-internal query would need the QWERTY routed to it instead of
   the app's `InputConnection`.
+- The emoji key left of Enter opens the emoji panel, the language panel's
+  sibling. It opens with `MOST USED` — the emojis with the most taps, at most
+  `MOST_USED_EMOJI_LIMIT` (20), ties broken by recency — then the full
+  `res/raw/emoji.txt` catalogue: `group:` lines with one fully-qualified emoji
+  each, generated from Unicode `emoji-test.txt` 16.0 (the system font's set;
+  skin-tone variants and the Component group are left out). The grid is lazy,
+  seven to a row at the 28 sp title step, so the 1,906 emoji cost nothing until
+  scrolled. One tap commits with `commitText` and leaves the panel up for the
+  next one; `ScribePrefs.recordEmojiUse` persists the counts, so the row
+  survives a keyboard show. `showEmoji` closes on the panel's `Close` or BACK.
+  It has no search field, for the same routing reason.
 - Settings also edits the NAS profile: the tone is stored in `prefs.tone` and
   sent as `?tone=…` on every request; word chips and `heard → write`
   replacements are saved with one PUT; processing is a Cloud/Offline/Offline

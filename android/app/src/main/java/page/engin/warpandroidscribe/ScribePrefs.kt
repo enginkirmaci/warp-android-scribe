@@ -2,6 +2,7 @@ package com.engin.warpandroidscribe
 
 import android.content.Context
 import org.json.JSONArray
+import org.json.JSONObject
 
 class ScribePrefs(context: Context) {
     private val prefs = context.getSharedPreferences("scribe", Context.MODE_PRIVATE)
@@ -130,6 +131,54 @@ class ScribePrefs(context: Context) {
         }.getOrDefault(emptyList())
     }
 
+    /** The emoji taps that earned a place in the panel's most-used row. */
+    fun emojiUsage(): List<EmojiUse> {
+        val raw = prefs.getString(KEY_EMOJI_USAGE, null) ?: return emptyList()
+        return runCatching {
+            val array = JSONArray(raw)
+            buildList {
+                for (index in 0 until array.length()) {
+                    val item = array.optJSONObject(index) ?: continue
+                    val emoji = item.optString("emoji")
+                    if (emoji.isBlank()) continue
+                    add(
+                        EmojiUse(
+                            emoji = emoji,
+                            count = item.optInt("count", 0),
+                            lastUsed = item.optLong("last_used", 0L),
+                        ),
+                    )
+                }
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    /**
+     * Counts one tap and returns the row in display order: most taps first, the
+     * more recently used emoji breaking a tie. Older entries fall off the cap.
+     */
+    fun recordEmojiUse(emoji: String): List<EmojiUse> {
+        val current = emojiUsage()
+        val now = System.currentTimeMillis()
+        val taps = current.firstOrNull { it.emoji == emoji }?.count ?: 0
+        val next = (current.filter { it.emoji != emoji } + EmojiUse(emoji, taps + 1, now))
+            .sortedWith(
+                compareByDescending<EmojiUse> { it.count }.thenByDescending { it.lastUsed },
+            )
+            .take(MOST_USED_EMOJI_LIMIT)
+        val array = JSONArray()
+        next.forEach { use ->
+            array.put(
+                JSONObject()
+                    .put("emoji", use.emoji)
+                    .put("count", use.count)
+                    .put("last_used", use.lastUsed),
+            )
+        }
+        prefs.edit().putString(KEY_EMOJI_USAGE, array.toString()).apply()
+        return next
+    }
+
     companion object {
         const val DEFAULT_LOCAL_URL = "http://<nas-lan>:8787"
         const val DEFAULT_REMOTE_URL = "https://<nas-host>"
@@ -146,6 +195,7 @@ class ScribePrefs(context: Context) {
         private const val KEY_SHORTCUTS = "shortcuts"
         private const val KEY_LOCAL_URL = "local_url"
         private const val KEY_REMOTE_URL = "remote_url"
+        private const val KEY_EMOJI_USAGE = "emoji_usage"
 
     }
 }

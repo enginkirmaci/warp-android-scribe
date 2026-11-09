@@ -256,27 +256,29 @@ selected, and `SETUP` otherwise.
 
 ### Keyboard
 
-- The keyboard opens in a compact dictation/prompt layout. The top bar, left
-  to right: the keyboard icon, the green **Dictate** pill with its trailing
-  language segment (`TR`, `EN-GB`, `AUTO`, …), clipboard and, in compact only,
-  delete. The keyboard icon switches to the full QWERTY; long-press opens
-  Settings. Tapping the language segment opens the in-keyboard language panel,
-  using the same list as Settings.
+- The keyboard opens in a compact dictation/prompt layout. The error line is
+  the first row, so no panel can hide it; under it the clipboard bar, then the
+  top bar. The top bar, left to right: the keyboard icon, the green **Dictate**
+  pill with its trailing language segment (`TR`, `EN-GB`, `AUTO`, …) and the
+  delete key to its right in both layouts. The keyboard icon switches to the
+  full QWERTY; long-press opens Settings. Tapping the language segment opens
+  the in-keyboard language panel, using the same list as Settings.
 - After a transcript lands the pill reads **Inserted** for four seconds and the
   segment becomes **Undo**, which deletes exactly the code points that
   dictation inserted. The confirmation costs no extra row.
 - Under the top bar, the app-configured shortcut row shows slash commands
   (`/goal`, `/compact` by default). Tapping inserts the command plus a space;
   edit the comma-separated list in Settings.
-- The compact body: cursor arrows (hold to repeat), the unlabelled space bar
-  and enter, then
-  icon buttons for `Undo`, `Cut`, `Copy` and `Paste`. Below the icons, the
-  clipboard appears as a single horizontal row of boxes; tap one to insert it.
-  Delete is the top-bar key (hold to repeat); there is no backspace beside the
-  arrows. Vibration is off.
+- The clipboard bar above the top bar: the clipboard button at the left, then a
+  single horizontal row of clip boxes; tap one to insert it. The bar stays
+  while a panel is open, so the button never moves.
+- The compact body: cursor arrows (hold to repeat), the unlabelled space bar,
+  the emoji key and enter, then icon buttons for `Undo`, `Cut`, `Copy` and
+  `Paste`. Delete is the top-bar key (hold to repeat); there is no backspace
+  beside the arrows or in the full layout's letter row. Vibration is off.
 - The keyboard icon opens the full English QWERTY (number row,
-  `qwertyuiop`, `asdfghjkl`, `zxcvbnm`, shift/backspace, `?123`,
-  space/enter); the same icon returns to the compact surface. The compact
+  `qwertyuiop`, `asdfghjkl`, `zxcvbnm`, shift, `?123`, space/emoji/enter);
+  the same icon returns to the compact surface. The compact
   layout is the default on every keyboard show; the full switch is temporary.
   Shift applies to one letter; a second tap within 300 ms locks it, and the
   locked key shows a small bar under the arrow.
@@ -288,9 +290,9 @@ selected, and `SETUP` otherwise.
   Settings, opened by long-pressing the keyboard icon. A recording replaces
   the keyboard icon with a cancel `X`; a quick tap locks the recording, a hold
   is push-to-talk.
-- The clipboard button replaces the old keyboard-switch key. It opens a panel
-  over the key area with one grid of cards: `TEXT` clips, `DICTATION`
-  transcripts and `IMAGE` thumbnails together, with no separate sections.
+- The clipboard button in the clipboard bar opens a panel over the key area
+  with one grid of cards: `TEXT` clips, `DICTATION` transcripts and `IMAGE`
+  thumbnails together, with no separate sections.
   Tapping a text clip commits it, tapping an image commits it with
   `InputConnection.commitContent`. The expand icon opens the full clipboard view
   with `ALL`/`TEXT`/`IMAGES`/`DICTATION` filters, relative timestamps,
@@ -307,6 +309,13 @@ The language panel opens centred on the current language: a **COMMON** block
 first, then the remaining languages grouped by the first letter of their
 English name, with an A–Z rail above the list that jumps to a letter. The panel
 has no text field — an IME-internal query would need the QWERTY routed to it.
+
+The emoji key left of Enter opens an in-keyboard emoji panel: **MOST USED**
+first — the twenty most tapped emoji, best count first, recent wins a tie —
+then the full Emoji 16.0 catalogue the system font draws, seven to a row at the
+larger title size. One tap commits the emoji and the panel stays up for the
+next one; the counts persist across keyboard shows. It has no search field
+either.
 
 ### Network security
 

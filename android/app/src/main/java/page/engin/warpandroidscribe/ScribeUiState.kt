@@ -42,9 +42,15 @@ class ScribeUiState {
     var canRetry by mutableStateOf(false)
     var clipboardView by mutableStateOf(ClipboardView.HIDDEN)
     var showLanguages by mutableStateOf(false)
+    /** The emoji grid replaces the key area, like the language panel. */
+    var showEmoji by mutableStateOf(false)
     /** Height of the system navigation bar drawn over the IME window. */
     var systemBarInsetPx by mutableIntStateOf(0)
     var clipboard by mutableStateOf<List<ClipboardEntry>>(emptyList())
+    /** Emoji taps in display order; the emoji panel's most-used row. */
+    var emojiUsage by mutableStateOf<List<EmojiUse>>(emptyList())
+    /** The full emoji grid, read once from `res/raw/emoji.txt`. */
+    var emojiGroups by mutableStateOf<List<EmojiGroup>>(emptyList())
     var shortcuts by mutableStateOf<List<String>>(emptyList())
     /** Transient confirmation after a transcript lands, e.g. "Inserted". */
     var notice by mutableStateOf<String?>(null)
@@ -60,6 +66,7 @@ class ScribeActions(
     val onDismissError: () -> Unit,
     val onSettings: () -> Unit,
     val onToggleLanguage: () -> Unit,
+    val onToggleEmoji: () -> Unit,
     val onSelectLanguage: (String) -> Unit,
     val onToggleLayout: () -> Unit,
     val onUndo: () -> Unit,
@@ -77,5 +84,6 @@ class ScribeActions(
     val onCopyEntry: (ClipboardEntry) -> Unit,
     val onBackspace: () -> Unit,
     val onEnter: () -> Unit,
+    val onEmoji: (String) -> Unit,
     val onText: (String) -> Unit,
 )

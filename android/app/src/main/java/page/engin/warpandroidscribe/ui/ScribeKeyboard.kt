@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -29,6 +30,10 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
@@ -79,7 +84,10 @@ import com.engin.warpandroidscribe.ClipboardEntry
 import com.engin.warpandroidscribe.ClipboardView
 import com.engin.warpandroidscribe.COMMON_LANGUAGE_CODES
 import com.engin.warpandroidscribe.DictationLanguage
+import com.engin.warpandroidscribe.EmojiGroup
+import com.engin.warpandroidscribe.EmojiUse
 import com.engin.warpandroidscribe.KeyboardMode
+import com.engin.warpandroidscribe.MOST_USED_EMOJI_LIMIT
 import com.engin.warpandroidscribe.Phase
 import com.engin.warpandroidscribe.R
 import com.engin.warpandroidscribe.ScribeActions
@@ -98,6 +106,9 @@ private const val SHIFT_DOUBLE_TAP_MS = 300L
 private val LANGUAGE_ROW_GAP = 6.dp
 private val LANGUAGE_JUMP_WIDTH = 40.dp
 
+/** Seven emoji to a row leaves room for the bigger glyph. */
+private const val EMOJI_COLUMNS = 7
+
 @Composable
 fun ScribeKeyboard(state: ScribeUiState, actions: ScribeActions) {
     val density = LocalDensity.current
@@ -113,15 +124,26 @@ fun ScribeKeyboard(state: ScribeUiState, actions: ScribeActions) {
             .background(ScribeColors.Background)
             .padding(start = 6.dp, end = 6.dp, top = 6.dp, bottom = bottomPadding),
     ) {
+        // The error owns the first row, above the top bar: whatever replaces
+        // the key area (language, emoji, clipboard) can never hide it.
+        state.error?.let { ErrorLine(state, actions) }
         if (state.clipboardView == ClipboardView.FULL) {
             ClipboardFullView(state, actions)
         } else {
+            // The clip bar is the keyboard's first row, above the Dictate bar:
+            // the quickest insert stays the closest to the app's own content.
+            ClipboardDock(state, actions)
             TopBar(state, actions)
             when {
                 state.showLanguages -> LanguagePanel(state, actions)
+                state.showEmoji -> EmojiPanel(
+                    usage = state.emojiUsage,
+                    groups = state.emojiGroups,
+                    onInsert = actions.onEmoji,
+                    onClose = actions.onToggleEmoji,
+                )
                 state.clipboardView == ClipboardView.QUICK -> ClipboardPanel(state, actions)
                 else -> {
-                    state.error?.let { ErrorLine(state, actions) }
                     if (state.layout == KeyboardMode.COMPACT) {
                         CompactBody(state, actions)
                     } else {
@@ -158,48 +180,26 @@ private fun TopBar(state: ScribeUiState, actions: ScribeActions) {
             LayoutButton(state.layout, actions.onToggleLayout, actions.onSettings)
         }
         // The pill carries the dictation language in its own segment, so the
-        // bar is three controls instead of five.
+        // bar is the layout switch, the pill and delete. The clipboard button
+        // and its history live in the row above.
         DictatePill(state, actions, Modifier.weight(1f).fillMaxHeight())
-        KeyBox(
+        // Delete is always the pill's right-hand neighbour, in both layouts.
+        RepeatKey(
             modifier = Modifier
                 .width(ScribeSize.Key)
                 .fillMaxHeight()
                 .alpha(if (keysEnabled) 1f else DISABLED_ALPHA),
             enabled = keysEnabled,
+            label = "Delete",
             shape = ScribeShape.Pill,
-            onClick = actions.onToggleClipboard,
+            onRepeat = actions.onBackspace,
         ) {
             Icon(
-                painter = painterResource(R.drawable.ic_clipboard),
-                contentDescription = "Clipboard",
-                tint = if (state.clipboardView != ClipboardView.HIDDEN) {
-                    ScribeColors.Green
-                } else {
-                    ScribeColors.Text
-                },
+                painter = painterResource(R.drawable.ic_backspace),
+                contentDescription = null,
+                tint = ScribeColors.Text,
                 modifier = Modifier.size(20.dp),
             )
-        }
-        // Compact has no backspace elsewhere; the full layout carries one in
-        // its letter row, so there the bar hands the slot back to Dictate.
-        if (state.layout == KeyboardMode.COMPACT) {
-            RepeatKey(
-                modifier = Modifier
-                    .width(ScribeSize.Key)
-                    .fillMaxHeight()
-                    .alpha(if (keysEnabled) 1f else DISABLED_ALPHA),
-                enabled = keysEnabled,
-                label = "Delete",
-                shape = ScribeShape.Pill,
-                onRepeat = actions.onBackspace,
-            ) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_backspace),
-                    contentDescription = null,
-                    tint = ScribeColors.Text,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
         }
     }
 }
@@ -351,7 +351,7 @@ private fun ErrorLine(state: ScribeUiState, actions: ScribeActions) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 5.dp, bottom = 1.dp)
+            .padding(bottom = 5.dp)
             .clip(ScribeShape.Surface)
             .background(ScribeColors.ErrorBg)
             .heightIn(min = ScribeSize.Key)
@@ -467,6 +467,11 @@ private fun CompactBody(state: ScribeUiState, actions: ScribeActions) {
                 )
             }
             SpaceKey(Modifier.weight(1f).fillMaxHeight(), enabled) { actions.onText(" ") }
+            EmojiKey(
+                modifier = Modifier.width(54.dp).fillMaxHeight(),
+                enabled = enabled,
+                onClick = actions.onToggleEmoji,
+            )
             EnterKey(
                 modifier = Modifier.width(54.dp).fillMaxHeight(),
                 enabled = enabled,
@@ -491,7 +496,6 @@ private fun CompactBody(state: ScribeUiState, actions: ScribeActions) {
                 actions.onPaste()
             }
         }
-        ClipboardStrip(state, actions)
     }
 }
 
@@ -521,11 +525,15 @@ private fun EditorIcon(
 }
 
 @Composable
-private fun ClipboardStrip(state: ScribeUiState, actions: ScribeActions) {
+private fun ClipboardStrip(
+    state: ScribeUiState,
+    actions: ScribeActions,
+    modifier: Modifier = Modifier,
+) {
     val entries = state.clipboard
     if (entries.isEmpty()) return
     val scroll = rememberScrollState()
-    Box(Modifier.fillMaxWidth().height(ScribeSize.Key)) {
+    Box(modifier.fillMaxWidth().height(ScribeSize.Key)) {
         Row(
             modifier = Modifier
                 .fillMaxSize()
@@ -597,6 +605,53 @@ private fun ClipboardStrip(state: ScribeUiState, actions: ScribeActions) {
                         ),
                     ),
             )
+        }
+    }
+}
+
+/**
+ * The keyboard's first row: the clipboard button, then the clip history. It is
+ * chrome like the Dictate bar, so a panel replaces the keys below it without
+ * taking the clips away, and the button stays reachable while the history is
+ * still empty.
+ */
+@Composable
+private fun ClipboardDock(state: ScribeUiState, actions: ScribeActions) {
+    val enabled = state.phase == Phase.IDLE || state.phase == Phase.ERROR
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        KeyBox(
+            modifier = Modifier
+                .width(ScribeSize.Key)
+                .height(ScribeSize.Key)
+                .alpha(if (enabled) 1f else DISABLED_ALPHA),
+            enabled = enabled,
+            shape = ScribeShape.Chip,
+            onClick = actions.onToggleClipboard,
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_clipboard),
+                contentDescription = "Clipboard",
+                tint = if (state.clipboardView != ClipboardView.HIDDEN) {
+                    ScribeColors.Green
+                } else {
+                    ScribeColors.Text
+                },
+                modifier = Modifier.size(20.dp),
+            )
+        }
+        if (state.clipboard.isEmpty()) {
+            Text(
+                text = "No clips yet",
+                color = ScribeColors.Muted,
+                fontSize = ScribeText.Body,
+                modifier = Modifier.padding(start = 2.dp),
+            )
+        } else {
+            ClipboardStrip(state, actions, Modifier.weight(1f))
         }
     }
 }
@@ -744,25 +799,13 @@ private fun KeyboardBody(state: ScribeUiState, actions: ScribeActions) {
                         typeLetter(key)
                     }
                 }
-                RepeatKey(
-                    modifier = Modifier.width(48.dp).fillMaxHeight(),
-                    enabled = enabled,
-                    label = "Delete",
-                    onRepeat = actions.onBackspace,
-                ) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_backspace),
-                        contentDescription = null,
-                        tint = ScribeColors.Text,
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
             }
             BottomRow(
                 enabled = enabled,
                 onMode = { symbols = true },
                 onSpace = { actions.onText(" ") },
                 onEnter = actions.onEnter,
+                onEmoji = actions.onToggleEmoji,
                 sendKey = state.sendKey,
                 onText = actions.onText,
             )
@@ -794,6 +837,7 @@ private fun BottomRow(
     onMode: () -> Unit,
     onSpace: () -> Unit,
     onEnter: () -> Unit,
+    onEmoji: () -> Unit,
     sendKey: Boolean,
     onText: (String) -> Unit,
 ) {
@@ -811,6 +855,11 @@ private fun BottomRow(
         Key(",", Modifier.width(34.dp).fillMaxHeight(), enabled) { onText(",") }
         SpaceKey(Modifier.weight(1f).fillMaxHeight(), enabled) { onSpace() }
         Key(".", Modifier.width(34.dp).fillMaxHeight(), enabled) { onText(".") }
+        EmojiKey(
+            modifier = Modifier.width(54.dp).fillMaxHeight(),
+            enabled = enabled,
+            onClick = onEmoji,
+        )
         EnterKey(
             modifier = Modifier.width(54.dp).fillMaxHeight(),
             enabled = enabled,
@@ -856,19 +905,6 @@ private fun SymbolRows(
             Text("ABC", color = ScribeColors.Text, fontSize = ScribeText.Body)
         }
         SpaceKey(Modifier.weight(1f).fillMaxHeight(), enabled) { actions.onText(" ") }
-        RepeatKey(
-            modifier = Modifier.width(54.dp).fillMaxHeight(),
-            enabled = enabled,
-            label = "Delete",
-            onRepeat = actions.onBackspace,
-        ) {
-            Icon(
-                painter = painterResource(R.drawable.ic_backspace),
-                contentDescription = null,
-                tint = ScribeColors.Text,
-                modifier = Modifier.size(20.dp),
-            )
-        }
         EnterKey(
             modifier = Modifier.width(54.dp).fillMaxHeight(),
             enabled = enabled,
@@ -1287,6 +1323,101 @@ private fun FilterButton(
     }
 }
 
+/**
+ * The emoji surface replaces the key area like the language panel: every emoji
+ * the system font draws, in lazy rows so the catalogue costs nothing until it
+ * is scrolled. One tap commits the emoji and leaves the panel up for the next.
+ */
+@Composable
+private fun EmojiPanel(
+    usage: List<EmojiUse>,
+    groups: List<EmojiGroup>,
+    onInsert: (String) -> Unit,
+    onClose: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(imePanelHeight(0.42f, 340.dp))
+            .padding(top = 6.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().height(ScribeSize.Key),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "EMOJI",
+                color = ScribeColors.Muted,
+                fontSize = ScribeText.Caption,
+                fontWeight = FontWeight.Medium,
+                letterSpacing = 0.8.sp,
+            )
+            Spacer(Modifier.weight(1f))
+            SmallAction("Close", onClose, ScribeColors.Text)
+        }
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(EMOJI_COLUMNS),
+            modifier = Modifier.fillMaxWidth().weight(1f),
+            contentPadding = PaddingValues(bottom = 6.dp),
+        ) {
+            // The learned row leads: the emoji this hand actually reaches for,
+            // most tapped first, capped at one glance's worth.
+            if (usage.isNotEmpty()) {
+                item(key = "most-used", span = { GridItemSpan(maxLineSpan) }) {
+                    EmojiHeading("MOST USED")
+                }
+                items(
+                    items = usage.take(MOST_USED_EMOJI_LIMIT),
+                    key = { "used:${it.emoji}" },
+                ) { use ->
+                    EmojiCell(use.emoji, onInsert)
+                }
+            }
+            for (group in groups) {
+                item(key = "group:${group.label}", span = { GridItemSpan(maxLineSpan) }) {
+                    EmojiHeading(group.label)
+                }
+                items(
+                    items = group.emoji,
+                    key = { "group:${group.label}:$it" },
+                ) { emoji ->
+                    EmojiCell(emoji, onInsert)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EmojiHeading(label: String) {
+    Text(
+        text = label,
+        color = ScribeColors.Muted,
+        fontSize = ScribeText.Caption,
+        fontWeight = FontWeight.Medium,
+        letterSpacing = 0.8.sp,
+        modifier = Modifier.padding(start = 2.dp, top = 6.dp, bottom = 1.dp),
+    )
+}
+
+/** The emoji is the whole target here, so it draws at the title step. */
+@Composable
+private fun EmojiCell(emoji: String, onInsert: (String) -> Unit) {
+    Box(
+        modifier = Modifier
+            .height(ScribeSize.Tap)
+            .combinedClickable { onInsert(emoji) },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = emoji,
+            color = ScribeColors.Text,
+            fontSize = ScribeText.PageTitle,
+            maxLines = 1,
+        )
+    }
+}
+
 /** One line of the language panel: either a section label or a pair of languages. */
 private sealed interface LanguageItem {
     data class Heading(val label: String) : LanguageItem
@@ -1554,6 +1685,23 @@ private fun SpaceKey(
         enabled = enabled,
         onClick = onClick,
     ) {}
+}
+
+/** The emoji key sits to the left of Enter in both the compact and full rows. */
+@Composable
+private fun EmojiKey(
+    modifier: Modifier,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    KeyBox(modifier = modifier, enabled = enabled, onClick = onClick) {
+        Icon(
+            painter = painterResource(R.drawable.ic_emoji),
+            contentDescription = "Emoji",
+            tint = ScribeColors.Text,
+            modifier = Modifier.size(20.dp),
+        )
+    }
 }
 
 /**
