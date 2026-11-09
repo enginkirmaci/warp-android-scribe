@@ -36,6 +36,8 @@ class ScribeUiState {
     var locked by mutableStateOf(false)
     var elapsedSecs by mutableIntStateOf(0)
     var language by mutableStateOf("tr")
+    /** True when the focused editor asks for a send action, so Enter shows ↑. */
+    var sendKey by mutableStateOf(false)
     var layout by mutableStateOf(KeyboardMode.COMPACT)
     var error by mutableStateOf<String?>(null)
     var canRetry by mutableStateOf(false)

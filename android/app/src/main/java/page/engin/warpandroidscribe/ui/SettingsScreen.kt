@@ -13,33 +13,29 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -61,12 +57,18 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.engin.warpandroidscribe.ConnectionMode
+import com.engin.warpandroidscribe.DictationTone
+import com.engin.warpandroidscribe.Replacement
+import com.engin.warpandroidscribe.ServerSettings
 import com.engin.warpandroidscribe.SUPPORTED_LANGUAGES
 import com.engin.warpandroidscribe.ScribeClient
 import com.engin.warpandroidscribe.ScribePrefs
+import com.engin.warpandroidscribe.TONES
+import com.engin.warpandroidscribe.Vocabulary
 import com.engin.warpandroidscribe.isSupportedLanguage
 import com.engin.warpandroidscribe.languageName
 
@@ -79,6 +81,7 @@ fun SettingsScreen() {
     var mode by rememberSaveable { mutableStateOf(prefs.mode) }
     var token by rememberSaveable { mutableStateOf(prefs.token) }
     var language by rememberSaveable { mutableStateOf(prefs.language) }
+    var tone by rememberSaveable { mutableStateOf(prefs.tone) }
     var shortcuts by rememberSaveable {
         mutableStateOf(prefs.shortcuts.joinToString(", "))
     }
@@ -86,7 +89,13 @@ fun SettingsScreen() {
     var remoteUrl by rememberSaveable { mutableStateOf(prefs.remoteUrl) }
     var message by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
-    var languageMenuOpen by remember { mutableStateOf(false) }
+    var languagePickerOpen by remember { mutableStateOf(false) }
+    var languages by remember { mutableStateOf(SUPPORTED_LANGUAGES) }
+    var server by remember { mutableStateOf<ServerSettings?>(null) }
+    var vocabulary by remember { mutableStateOf<Vocabulary?>(null) }
+    var vocabularyDirty by remember { mutableStateOf(false) }
+    var serverBusy by remember { mutableStateOf(false) }
+    var serverMessage by remember { mutableStateOf<String?>(null) }
     var imeEnabled by remember { mutableStateOf(isImeEnabled(context)) }
     var micGranted by remember { mutableStateOf(hasMicrophone(context)) }
     var localGranted by remember { mutableStateOf(hasLocalNetwork(context)) }
@@ -151,6 +160,7 @@ fun SettingsScreen() {
                 mode = mode,
                 token = token,
                 language = language,
+                tone = tone,
                 shortcuts = shortcuts,
                 localUrl = localUrl,
                 remoteUrl = remoteUrl,
@@ -160,6 +170,52 @@ fun SettingsScreen() {
             return false
         }
         return true
+    }
+
+    fun applyServer(snapshot: ServerSettings) {
+        server = snapshot
+        if (!vocabularyDirty) {
+            vocabulary = snapshot.vocabulary
+        }
+        if (snapshot.languages.isNotEmpty()) {
+            languages = snapshot.languages
+        }
+    }
+
+    fun refreshServer(showMessage: Boolean = false) {
+        if (!prefs.isConfigured) {
+            if (showMessage) {
+                serverMessage = "Save the token and server URL first."
+            }
+            return
+        }
+        scope.launch {
+            serverBusy = true
+            val result = withContext(Dispatchers.IO) {
+                runCatching { ScribeClient(prefs).settings() }
+            }
+            result.onSuccess { snapshot ->
+                applyServer(snapshot)
+                if (showMessage) serverMessage = "Server profile loaded."
+            }.onFailure { error ->
+                serverMessage = "Server profile unavailable: ${error.message}"
+            }
+            serverBusy = false
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        refreshServer()
+    }
+
+    LaunchedEffect(server?.processingTarget) {
+        while (server?.processingTarget != null) {
+            delay(2_000)
+            val next = withContext(Dispatchers.IO) {
+                runCatching { ScribeClient(prefs).settings() }.getOrNull()
+            }
+            if (next != null) applyServer(next)
+        }
     }
 
     fun testServer() {
@@ -174,13 +230,17 @@ fun SettingsScreen() {
         scope.launch {
             busy = true
             val client = ScribeClient(prefs)
-            message = withContext(Dispatchers.IO) {
+            val result = withContext(Dispatchers.IO) {
                 runCatching { client.health() }.fold(
                     onSuccess = { "Server is running (version $it)." },
                     onFailure = { "Server error: ${it.message}" },
                 )
             }
             busy = false
+            message = result
+            if (result.startsWith("Server is running")) {
+                refreshServer(showMessage = true)
+            }
         }
     }
 
@@ -276,54 +336,66 @@ fun SettingsScreen() {
                 color = ScribeColors.Muted,
                 fontSize = 11.sp,
             )
+            OutlinedButton(
+                onClick = { refreshServer(showMessage = true) },
+                enabled = !serverBusy,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth().height(44.dp),
+            ) {
+                Text(if (serverBusy) "Loading profile…" else "Refresh server profile", fontSize = 12.sp)
+            }
+            serverMessage?.let {
+                Text(it, color = ScribeColors.Muted, fontSize = 11.sp)
+            }
         }
 
         SettingsCard("DICTATION") {
             Text("Language", color = ScribeColors.Text, fontSize = 12.sp, fontWeight = FontWeight.Medium)
-            Box(Modifier.fillMaxWidth()) {
-                OutlinedButton(
-                    onClick = { languageMenuOpen = true },
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth().height(52.dp),
-                ) {
-                    Text(
-                        text = languageName(language),
-                        color = ScribeColors.Text,
-                        fontSize = 14.sp,
-                        textAlign = TextAlign.Start,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Text("▾", color = ScribeColors.Muted, fontSize = 14.sp)
-                }
-                DropdownMenu(
-                    expanded = languageMenuOpen,
-                    onDismissRequest = { languageMenuOpen = false },
-                    modifier = Modifier.widthIn(min = 220.dp).heightIn(max = 360.dp),
-                ) {
-                    for (item in SUPPORTED_LANGUAGES) {
-                        DropdownMenuItem(
-                            text = {
-                                Text(
-                                    text = item.name,
-                                    color = if (language == item.code) {
-                                        ScribeColors.Green
-                                    } else {
-                                        ScribeColors.Text
-                                    },
-                                )
-                            },
-                            onClick = {
-                                language = item.code
-                                languageMenuOpen = false
-                            },
-                        )
-                    }
-                }
+            OutlinedButton(
+                onClick = { languagePickerOpen = true },
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+            ) {
+                Text(
+                    text = languageName(language),
+                    color = ScribeColors.Text,
+                    fontSize = 14.sp,
+                    textAlign = TextAlign.Start,
+                    modifier = Modifier.weight(1f),
+                )
+                Text("▾", color = ScribeColors.Muted, fontSize = 14.sp)
+            }
+            Text(
+                "Search ${languages.size} languages in the picker.",
+                color = ScribeColors.Muted,
+                fontSize = 10.sp,
+            )
+            Text("Tone", color = ScribeColors.Text, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+            TonePicker(
+                value = tone,
+                options = toneChoices(server),
+                onSelect = { tone = it },
+            )
+            Text(
+                "Casual is lowercase, formal expands contractions. The cleanup model applies it.",
+                color = ScribeColors.Muted,
+                fontSize = 10.sp,
+            )
+            if (languagePickerOpen) {
+                LanguagePickerDialog(
+                    selected = language,
+                    languages = languages,
+                    onSelect = {
+                        language = it
+                        languagePickerOpen = false
+                    },
+                    onDismiss = { languagePickerOpen = false },
+                )
             }
             OutlinedTextField(
                 value = shortcuts,
                 onValueChange = { shortcuts = it },
-                label = { Text("Shortcuts") },
+                label = { Text("Slash commands") },
                 placeholder = { Text("/goal, /compact") },
                 singleLine = true,
                 shape = RoundedCornerShape(12.dp),
@@ -334,6 +406,100 @@ fun SettingsScreen() {
                     "Leave empty to hide the row.",
                 color = ScribeColors.Muted,
                 fontSize = 11.sp,
+            )
+        }
+
+        SettingsCard("VOCABULARY") {
+            VocabularyCard(
+                vocabulary = vocabulary,
+                busy = serverBusy,
+                onAddTerm = { term ->
+                    vocabulary?.let { current ->
+                        vocabularyDirty = true
+                        vocabulary = current.copy(
+                            terms = (current.terms + term).distinct(),
+                        )
+                    }
+                },
+                onRemoveTerm = { term ->
+                    vocabulary?.let { current ->
+                        vocabularyDirty = true
+                        vocabulary = current.copy(terms = current.terms - term)
+                    }
+                },
+                onAddReplacement = { original, with ->
+                    vocabulary?.let { current ->
+                        vocabularyDirty = true
+                        vocabulary = current.copy(
+                            replacements = current.replacements
+                                .filterNot { it.original == original } +
+                                Replacement(original, with),
+                        )
+                    }
+                },
+                onRemoveReplacement = { original ->
+                    vocabulary?.let { current ->
+                        vocabularyDirty = true
+                        vocabulary = current.copy(
+                            replacements = current.replacements
+                                .filterNot { it.original == original },
+                        )
+                    }
+                },
+                onSave = {
+                    vocabulary?.let { current ->
+                        scope.launch {
+                            serverBusy = true
+                            val result = withContext(Dispatchers.IO) {
+                                runCatching { ScribeClient(prefs).saveVocabulary(current) }
+                            }
+                            result.onSuccess { snapshot ->
+                                vocabularyDirty = false
+                                applyServer(snapshot)
+                                serverMessage = "Vocabulary saved."
+                            }.onFailure { error ->
+                                serverMessage = "Vocabulary was not saved: ${error.message}"
+                            }
+                            serverBusy = false
+                        }
+                    }
+                },
+            )
+        }
+
+        SettingsCard("PROCESSING") {
+            ProcessingCard(
+                settings = server,
+                busy = serverBusy,
+                onSelect = { selected ->
+                    if (selected != server?.processing) {
+                        scope.launch {
+                            serverBusy = true
+                            val result = withContext(Dispatchers.IO) {
+                                runCatching { ScribeClient(prefs).setProcessing(selected) }
+                            }
+                            result.onSuccess { snapshot ->
+                                applyServer(snapshot)
+                                serverMessage = "Processing set to ${snapshot.processing}."
+                            }.onFailure { error ->
+                                serverMessage = "Processing change failed: ${error.message}"
+                            }
+                            serverBusy = false
+                        }
+                    }
+                },
+                onCancel = {
+                    scope.launch {
+                        serverBusy = true
+                        val result = withContext(Dispatchers.IO) {
+                            runCatching { ScribeClient(prefs).setProcessing("cloud") }
+                        }
+                        result.onSuccess { applyServer(it) }
+                            .onFailure { serverMessage = "Cancel failed: ${it.message}" }
+                        serverBusy = false
+                    }
+                },
+                onRefresh = { refreshServer(showMessage = true) },
             )
         }
 
@@ -509,7 +675,7 @@ fun SettingsScreen() {
 
         Text(
             text = "Server URLs and the token are stored in this app's private storage. " +
-                "The keyboard uses the selected mode and language the next time it opens.",
+                "The keyboard uses the selected mode, language and tone the next time it opens.",
             color = ScribeColors.Muted,
             fontSize = 11.sp,
         )
@@ -521,26 +687,11 @@ fun SettingsScreen() {
     }
 }
 
-@Composable
-private fun SettingsCard(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
-            .background(ScribeColors.Surface)
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Text(
-            text = title,
-            color = ScribeColors.Muted,
-            fontSize = 10.sp,
-            fontWeight = FontWeight.SemiBold,
-            letterSpacing = 1.sp,
-        )
-        content()
-    }
-}
+private fun toneChoices(settings: ServerSettings?): List<DictationTone> =
+    settings?.tones
+        ?.takeIf { it.isNotEmpty() }
+        ?.map { DictationTone(it.value, it.label) }
+        ?: TONES
 
 private fun isImeEnabled(context: Context): Boolean {
     // Settings.Secure.ENABLED_INPUT_METHODS is unreadable to apps targeting

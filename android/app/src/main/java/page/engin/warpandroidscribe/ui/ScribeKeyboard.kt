@@ -205,6 +205,11 @@ private fun LayoutButton(
 
 @Composable
 private fun LanguagePanel(state: ScribeUiState, actions: ScribeActions) {
+    val scroll = rememberScrollState()
+    LaunchedEffect(Unit) {
+        val index = SUPPORTED_LANGUAGES.indexOfFirst { it.code == state.language }
+        if (index > 1) scroll.scrollTo((index / 2) * 46)
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -225,11 +230,12 @@ private fun LanguagePanel(state: ScribeUiState, actions: ScribeActions) {
             Spacer(Modifier.weight(1f))
             SmallAction("Close", actions.onToggleLanguage, ScribeColors.Text)
         }
+        Spacer(Modifier.height(6.dp))
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
-                .verticalScroll(rememberScrollState()),
+                .verticalScroll(scroll),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             SUPPORTED_LANGUAGES.chunked(2).forEach { rowLanguages ->
@@ -275,6 +281,7 @@ private fun LanguageButton(
             fontSize = 11.sp,
             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
             maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }
@@ -468,7 +475,11 @@ private fun CompactBody(state: ScribeUiState, actions: ScribeActions) {
                 background = ScribeColors.Blue,
                 onClick = actions.onEnter,
             ) {
-                Text("↵", color = ScribeColors.Background, fontSize = 20.sp)
+                Text(
+                    if (state.sendKey) "↑" else "↵",
+                    color = ScribeColors.Background,
+                    fontSize = 20.sp,
+                )
             }
         }
         Row(
@@ -645,7 +656,7 @@ private fun KeyboardBody(state: ScribeUiState, actions: ScribeActions) {
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         if (symbols) {
-            SymbolRows(actions, enabled, onAbc = { symbols = false })
+            SymbolRows(actions, enabled, sendKey = state.sendKey, onAbc = { symbols = false })
         } else {
             Row(Modifier.fillMaxWidth().height(38.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                 for (key in "1234567890") {
@@ -692,6 +703,7 @@ private fun KeyboardBody(state: ScribeUiState, actions: ScribeActions) {
                 onMode = { symbols = true },
                 onSpace = { actions.onText(" ") },
                 onEnter = actions.onEnter,
+                sendKey = state.sendKey,
                 onText = actions.onText,
             )
         }
@@ -720,6 +732,7 @@ private fun BottomRow(
     onMode: () -> Unit,
     onSpace: () -> Unit,
     onEnter: () -> Unit,
+    sendKey: Boolean,
     onText: (String) -> Unit,
 ) {
     Row(Modifier.fillMaxWidth().height(44.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -745,13 +758,22 @@ private fun BottomRow(
             background = ScribeColors.Blue,
             onClick = onEnter,
         ) {
-            Text("↵", color = ScribeColors.Background, fontSize = 20.sp)
+            Text(
+                if (sendKey) "↑" else "↵",
+                color = ScribeColors.Background,
+                fontSize = 20.sp,
+            )
         }
     }
 }
 
 @Composable
-private fun SymbolRows(actions: ScribeActions, enabled: Boolean, onAbc: () -> Unit) {
+private fun SymbolRows(
+    actions: ScribeActions,
+    enabled: Boolean,
+    sendKey: Boolean,
+    onAbc: () -> Unit,
+) {
     val rows = listOf(
         listOf("!", "@", "#", "$", "%", "^", "&", "*", "(", ")"),
         listOf("-", "_", "=", "+", "[", "]", "{", "}", ";", ":"),
@@ -795,7 +817,11 @@ private fun SymbolRows(actions: ScribeActions, enabled: Boolean, onAbc: () -> Un
             background = ScribeColors.Blue,
             onClick = actions.onEnter,
         ) {
-            Text("↵", color = ScribeColors.Background, fontSize = 20.sp)
+            Text(
+                if (sendKey) "↑" else "↵",
+                color = ScribeColors.Background,
+                fontSize = 20.sp,
+            )
         }
     }
 }

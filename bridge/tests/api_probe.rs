@@ -120,6 +120,34 @@ async fn passes_the_requested_language_through() {
 }
 
 #[tokio::test]
+async fn passes_the_requested_tone_through() {
+    let work = TempDir::new().unwrap();
+    let mock = Arc::new(MockTranscriber::new("hello"));
+    let app = router(state(mock.clone(), &work));
+
+    let (status, body) = post(
+        app,
+        Some(TOKEN),
+        "/transcribe?lang=en&tone=formal",
+        wav(1.0),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["text"], "hello");
+    assert_eq!(mock.seen_tones(), vec![Some("formal".to_string())]);
+}
+
+#[tokio::test]
+async fn rejects_an_invalid_tone() {
+    let work = TempDir::new().unwrap();
+    let app = router(state(Arc::new(MockTranscriber::new("x")), &work));
+
+    let (status, body) = post(app, Some(TOKEN), "/transcribe?tone=friendly", wav(1.0)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["code"], "invalid_tone");
+}
+
+#[tokio::test]
 async fn defaults_to_the_configured_language() {
     let work = TempDir::new().unwrap();
     let mock = Arc::new(MockTranscriber::new("merhaba"));

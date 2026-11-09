@@ -15,6 +15,15 @@ pub struct Transcript {
     pub duration_secs: f64,
 }
 
+/// What the bridge asks the transcriber for on one request. The language pin
+/// and tone are both global to the Superwhisper profile, so they travel with
+/// the request and the CLI sets them under its session mutex.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TranscribeRequest {
+    pub language: String,
+    pub tone: Option<String>,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum TranscriberError {
     #[error("superwhisper CLI failed: {0}")]
@@ -35,8 +44,13 @@ pub trait Transcriber: Send + Sync {
     fn name(&self) -> &'static str;
 
     /// Transcribe `wav`, which the caller owns and keeps alive for the duration
-    /// of this call. `language` is a Superwhisper language code or `auto`.
-    async fn transcribe(&self, wav: &Path, language: &str) -> Result<Transcript, TranscriberError>;
+    /// of this call. The request carries a Superwhisper language code or `auto`
+    /// and, optionally, one of the five cleanup tones.
+    async fn transcribe(
+        &self,
+        wav: &Path,
+        request: &TranscribeRequest,
+    ) -> Result<Transcript, TranscriberError>;
 }
 
 /// An in-process transcriber for tests and for developing the phone UI while
@@ -49,6 +63,7 @@ pub struct MockTranscriber {
     delay: Duration,
     failure: Option<String>,
     seen_languages: Mutex<Vec<String>>,
+    seen_tones: Mutex<Vec<Option<String>>>,
 }
 
 impl MockTranscriber {
@@ -60,6 +75,7 @@ impl MockTranscriber {
             delay: Duration::ZERO,
             failure: None,
             seen_languages: Mutex::new(Vec::new()),
+            seen_tones: Mutex::new(Vec::new()),
         }
     }
 
@@ -91,6 +107,14 @@ impl MockTranscriber {
             .map(|seen| seen.clone())
             .unwrap_or_default()
     }
+
+    /// Every tone the server passed in, in request order.
+    pub fn seen_tones(&self) -> Vec<Option<String>> {
+        self.seen_tones
+            .lock()
+            .map(|seen| seen.clone())
+            .unwrap_or_default()
+    }
 }
 
 #[async_trait]
@@ -102,7 +126,7 @@ impl Transcriber for MockTranscriber {
     async fn transcribe(
         &self,
         _wav: &Path,
-        language: &str,
+        request: &TranscribeRequest,
     ) -> Result<Transcript, TranscriberError> {
         if !self.delay.is_zero() {
             tokio::time::sleep(self.delay).await;
@@ -111,14 +135,17 @@ impl Transcriber for MockTranscriber {
             return Err(TranscriberError::Cli(message.clone()));
         }
         if let Ok(mut seen) = self.seen_languages.lock() {
-            seen.push(language.to_string());
+            seen.push(request.language.clone());
+        }
+        if let Ok(mut seen) = self.seen_tones.lock() {
+            seen.push(request.tone.clone());
         }
         Ok(Transcript {
             text: self.text.clone(),
-            language: if language == "auto" {
+            language: if request.language == "auto" {
                 self.language.clone()
             } else {
-                language.to_string()
+                request.language.clone()
             },
             duration_secs: self.duration_secs,
         })

@@ -18,17 +18,27 @@ Two halves, two toolchains:
 
 ## Bridge
 
-- Wire contract: `POST /transcribe?lang=…` with raw `audio/wav` and
-  `Authorization: Bearer <token>`; `GET /health` for the phone's server test.
-  Changing the status codes, the JSON field names or the bearer scheme means
-  the Android client changes in the same commit.
+- Wire contract: `POST /transcribe?lang=…&tone=…` with raw `audio/wav` and
+  `Authorization: Bearer <token>`; `GET /health` for the phone's server test;
+  `GET /settings`, `PUT /settings/vocabulary` and `POST /settings/processing`
+  for the profile. Changing the status codes, the JSON field names or the
+  bearer scheme means the Android client changes in the same commit.
 - `SuperwhisperCli` serializes the whole set-language/transcribe/poll sequence
   with a tokio mutex: the daemon has one active session. Keep it that way.
 - The language pin is global in the Superwhisper profile; set it before every
   request, not once at startup.
+- The tone is the same kind of global profile pin; set it under the same mutex
+  right after the language. A `transcribe` that answers "Not ready: warming"
+  (exit 1) is retried until the request budget runs out: switching the
+  processing mode restarts the workers and takes about 20 s.
 - Poll `superwhisper status` until `phase=idle` **and** `last.session_id` is
   the id the transcribe command returned. Do not accept an idle with an older
   session id.
+- `settings.rs` is the only module that runs `general show`, `vocab` and
+  `models`; it parses the CLI's camelCase model JSON by hand. Vocabulary PUTs
+  diff against the current list and run only the needed `vocab` commands.
+  Processing downloads run in a spawned task, one model at a time, and the
+  current engine stays selected until the target mode has no missing models.
 - The request WAV is a `NamedTempFile` in the configured work dir; it must be
   dropped on success, failure and timeout. `tests/api_probe.rs` asserts the
   directory is empty afterwards.
@@ -75,10 +85,23 @@ Two halves, two toolchains:
 - Audio: `WavRecorder` (16 kHz mono PCM16, `VOICE_RECOGNITION`), max 120 s.
   Delete the cache WAV on success/cancel and sweep stale files on service
   creation. Never leave a recording behind.
-- The language button opens the in-keyboard language panel and sends the
-  selected code as `?lang=…`; `SUPPORTED_LANGUAGES` is the shared list,
-  `prefs.language` persists the choice, and Settings uses the same list in a
-  drop-down.
+- The language button opens the in-keyboard language panel (the full list,
+  auto-scrolled to the current code) and sends the selected code as `?lang=…`;
+  `SUPPORTED_LANGUAGES` is the 103 entries from Superwhisper 1.2.0,
+  `prefs.language` persists the choice, and Settings uses a filterable dialog
+  over the same list. Do not put an editable search field in the IME panel: an
+  IME-internal query would need the QWERTY routed to it instead of the app's
+  `InputConnection`.
+- Settings also edits the NAS profile: the tone is stored in `prefs.tone` and
+  sent as `?tone=…` on every request; word chips and `heard → write`
+  replacements are saved with one PUT; processing is a Cloud/Offline/Offline
+  Lite card that polls `GET /settings` while the bridge downloads models. The
+  server's language list, vocabulary and processing status load from
+  `GET /settings`; a failed load leaves the bundled list in place.
+- The Enter key is editor-aware: `ui.sendKey` is set from the focused
+  `EditorInfo` action, the key shows `↑` for `IME_ACTION_SEND`, and `enter()`
+  calls `sendDefaultEditorAction(true)` only for a declared action. Plain and
+  multiline fields keep the Enter key event.
 - Cleartext is limited to `<nas-lan>` in
   `res/xml/network_security_config.xml`. The public route is HTTPS and needs no
   exception.

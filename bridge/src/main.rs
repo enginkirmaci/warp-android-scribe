@@ -6,6 +6,7 @@ use tracing_subscriber::EnvFilter;
 use warp_android_scribe_bridge::{
     api::{AppState, router},
     config::Config,
+    settings::SettingsService,
     transcriber::{MockTranscriber, SuperwhisperCli, Transcriber},
 };
 
@@ -28,7 +29,11 @@ async fn main() -> Result<()> {
 
     let state = AppState::new(transcriber, config.token.clone(), config.timeout)
         .with_limits(config.max_audio_bytes, config.max_audio_secs)
-        .with_default_language(config.language.clone());
+        .with_default_language(config.language.clone())
+        .with_settings(Arc::new(SettingsService::new(
+            config.superwhisper_bin.clone(),
+            config.timeout,
+        )));
     let app = router(state);
 
     let listener = TcpListener::bind(config.addr)

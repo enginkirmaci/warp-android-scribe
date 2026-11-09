@@ -1,4 +1,5 @@
-//! The HTTP surface: `POST /transcribe` plus a token-checked `GET /health`.
+//! The HTTP surface: `POST /transcribe`, `GET /health`, and the token-checked
+//! `/settings` profile endpoints.
 
 use std::{
     io::Write,
@@ -14,7 +15,7 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{get, post, put},
 };
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
@@ -22,7 +23,8 @@ use tower_http::trace::TraceLayer;
 
 use crate::{
     config,
-    transcriber::{Transcriber, TranscriberError, Transcript},
+    settings::{SettingsError, SettingsService, Snapshot, Vocabulary},
+    transcriber::{TranscribeRequest, Transcriber, TranscriberError, Transcript},
     wav,
 };
 
@@ -38,6 +40,7 @@ pub struct AppState {
     default_language: String,
     work_dir: PathBuf,
     started: Instant,
+    settings: Arc<SettingsService>,
 }
 
 impl AppState {
@@ -55,6 +58,10 @@ impl AppState {
             default_language: config::DEFAULT_LANGUAGE.to_string(),
             work_dir: std::env::temp_dir(),
             started: Instant::now(),
+            settings: Arc::new(SettingsService::new(
+                "superwhisper",
+                Duration::from_secs(15),
+            )),
         }
     }
 
@@ -80,12 +87,20 @@ impl AppState {
         self.work_dir = work_dir.into();
         self
     }
+
+    pub fn with_settings(mut self, settings: Arc<SettingsService>) -> Self {
+        self.settings = settings;
+        self
+    }
 }
 
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/transcribe", post(transcribe))
+        .route("/settings", get(get_settings))
+        .route("/settings/vocabulary", put(put_vocabulary))
+        .route("/settings/processing", post(put_processing))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_token))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
@@ -116,6 +131,8 @@ async fn health(State(state): State<AppState>) -> Json<Health> {
 struct TranscribeQuery {
     #[serde(default)]
     lang: Option<String>,
+    #[serde(default)]
+    tone: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -188,6 +205,13 @@ async fn transcribe(
         })?,
         None => state.default_language.clone(),
     };
+    let tone =
+        match query.tone.as_deref() {
+            Some(tone) => Some(config::validate_tone(tone).map_err(|error| {
+                fail(StatusCode::BAD_REQUEST, "invalid_tone", error.to_string())
+            })?),
+            None => None,
+        };
 
     let mut temp = tempfile::Builder::new()
         .prefix("warp-scribe-")
@@ -219,12 +243,17 @@ async fn transcribe(
         bytes = bytes.len(),
         audio_secs = wav.duration_secs,
         language = %language,
+        tone = tone.as_deref().unwrap_or("profile"),
         "transcribing"
     );
 
+    let request = TranscribeRequest {
+        language: language.clone(),
+        tone,
+    };
     let outcome = tokio::time::timeout(
         state.timeout,
-        state.transcriber.transcribe(temp.path(), &language),
+        state.transcriber.transcribe(temp.path(), &request),
     )
     .await;
 
@@ -255,6 +284,82 @@ async fn transcribe(
         language: transcript.language,
         duration,
     }))
+}
+
+async fn get_settings(State(state): State<AppState>) -> Result<Json<Snapshot>, ApiError> {
+    state
+        .settings
+        .snapshot()
+        .await
+        .map(Json)
+        .map_err(settings_error)
+}
+
+async fn put_vocabulary(
+    State(state): State<AppState>,
+    Json(vocabulary): Json<Vocabulary>,
+) -> Result<Json<Snapshot>, ApiError> {
+    state
+        .settings
+        .set_vocabulary(vocabulary)
+        .await
+        .map_err(settings_error)?;
+    state
+        .settings
+        .snapshot()
+        .await
+        .map(Json)
+        .map_err(settings_error)
+}
+
+#[derive(Debug, Deserialize)]
+struct ProcessingBody {
+    mode: String,
+}
+
+async fn put_processing(
+    State(state): State<AppState>,
+    Json(body): Json<ProcessingBody>,
+) -> Result<Json<Snapshot>, ApiError> {
+    state
+        .settings
+        .set_processing(&body.mode)
+        .await
+        .map_err(settings_error)?;
+    state
+        .settings
+        .snapshot()
+        .await
+        .map(Json)
+        .map_err(settings_error)
+}
+
+fn settings_error(error: SettingsError) -> ApiError {
+    match error {
+        SettingsError::InvalidMode(_) | SettingsError::InvalidVocabulary(_) => fail(
+            StatusCode::BAD_REQUEST,
+            "invalid_setting",
+            error.to_string(),
+        ),
+        SettingsError::Busy => fail(StatusCode::CONFLICT, "processing_busy", error.to_string()),
+        SettingsError::Timeout => fail(
+            StatusCode::GATEWAY_TIMEOUT,
+            "settings_timeout",
+            "the settings command timed out",
+        ),
+        SettingsError::Cli { .. }
+        | SettingsError::Protocol(_)
+        | SettingsError::DownloadFailed(_, _)
+        | SettingsError::DownloadTimeout
+        | SettingsError::Io(_) => {
+            tracing::warn!(error = %error, "superwhisper settings failed");
+            fail(
+                StatusCode::BAD_GATEWAY,
+                "settings_failed",
+                error.to_string(),
+            )
+        }
+    }
 }
 
 fn response_duration(transcript: &Transcript, wav: &wav::WavInfo) -> f64 {

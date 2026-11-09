@@ -236,6 +236,8 @@ class ScribeImeService : InputMethodService() {
         super.onStartInputView(info, restarting)
         lifecycleOwner.onStart()
         ui.language = prefs.language
+        ui.sendKey = info?.imeOptions?.and(EditorInfo.IME_MASK_ACTION) ==
+            EditorInfo.IME_ACTION_SEND
         ui.shortcuts = prefs.shortcuts
         ui.clipboard = buildClipboard()
         ui.clipboardView = ClipboardView.HIDDEN
@@ -391,8 +393,9 @@ class ScribeImeService : InputMethodService() {
             }
 
             val language = ui.language
+            val tone = prefs.tone
             val result = withContext(Dispatchers.IO) {
-                runCatching { client.transcribe(file, language) }
+                runCatching { client.transcribe(file, language, tone) }
             }
             result.onSuccess { transcript ->
                 file.delete()
@@ -419,8 +422,9 @@ class ScribeImeService : InputMethodService() {
         ui.canRetry = false
         transcribeJob = scope.launch {
             val language = ui.language
+            val tone = prefs.tone
             val result = withContext(Dispatchers.IO) {
-                runCatching { client.transcribe(file, language) }
+                runCatching { client.transcribe(file, language, tone) }
             }
             result.onSuccess { transcript ->
                 file.delete()
@@ -707,6 +711,20 @@ class ScribeImeService : InputMethodService() {
     }
 
     private fun enter() {
+        // Editors that declare a send/go/search action get it from Enter; a
+        // plain or multiline field falls through to a real Enter key.
+        val info = currentInputEditorInfo
+        val action = info?.imeOptions?.and(EditorInfo.IME_MASK_ACTION) ?: EditorInfo.IME_ACTION_NONE
+        val noEnterAction = info?.imeOptions?.and(EditorInfo.IME_FLAG_NO_ENTER_ACTION) != 0
+        if (!noEnterAction &&
+            action != EditorInfo.IME_ACTION_NONE &&
+            action != EditorInfo.IME_ACTION_UNSPECIFIED
+        ) {
+            if (sendDefaultEditorAction(true)) {
+                haptic(HapticFeedbackConstants.KEYBOARD_TAP)
+                return
+            }
+        }
         val connection = currentInputConnection ?: return
         connection.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
         connection.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))

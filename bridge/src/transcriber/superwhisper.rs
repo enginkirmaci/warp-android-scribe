@@ -16,7 +16,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use tokio::{process::Command, sync::Mutex};
 
-use super::{Transcriber, TranscriberError, Transcript};
+use super::{TranscribeRequest, Transcriber, TranscriberError, Transcript};
 
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(200);
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
@@ -60,6 +60,19 @@ impl SuperwhisperCli {
         Ok(())
     }
 
+    /// `superwhisper general set tone <json>`; same global-profile caveat as
+    /// the language pin, applied inside the session mutex.
+    async fn set_tone(&self, tone: &str) -> Result<(), TranscriberError> {
+        let encoded = serde_json::to_string(tone)
+            .map_err(|error| TranscriberError::Protocol(error.to_string()))?;
+        self.run_str(
+            &["general", "set", "tone", encoded.as_str()],
+            CONTROL_TIMEOUT,
+        )
+        .await?;
+        Ok(())
+    }
+
     async fn run_str(
         &self,
         args: &[&str],
@@ -77,23 +90,33 @@ impl SuperwhisperCli {
 
     async fn wait(
         &self,
+        command: Command,
+        timeout: Duration,
+    ) -> Result<std::process::Output, TranscriberError> {
+        let output = self.output(command, timeout).await?;
+        if output.status.success() {
+            Ok(output)
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            Err(TranscriberError::Cli(format!(
+                "{} exited {}: {}",
+                self.bin.display(),
+                output.status,
+                stderr.trim()
+            )))
+        }
+    }
+
+    /// Runs a command and returns its output even when the exit status is
+    /// non-zero. `superwhisper transcribe` exits 1 while the daemon is warming
+    /// but still prints the JSON error the retry loop needs.
+    async fn output(
+        &self,
         mut command: Command,
         timeout: Duration,
     ) -> Result<std::process::Output, TranscriberError> {
         match tokio::time::timeout(timeout, command.output()).await {
-            Ok(Ok(output)) => {
-                if output.status.success() {
-                    Ok(output)
-                } else {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
-                    Err(TranscriberError::Cli(format!(
-                        "{} exited {}: {}",
-                        self.bin.display(),
-                        output.status,
-                        stderr.trim()
-                    )))
-                }
-            }
+            Ok(Ok(output)) => Ok(output),
             Ok(Err(error)) => Err(TranscriberError::Io(error)),
             Err(_) => Err(TranscriberError::Timeout),
         }
@@ -112,6 +135,7 @@ impl SuperwhisperCli {
 
 #[derive(Debug, Deserialize)]
 struct TranscribeAck {
+    #[serde(default)]
     ok: bool,
     #[serde(default)]
     session_id: Option<u64>,
@@ -148,38 +172,68 @@ impl Transcriber for SuperwhisperCli {
         "superwhisper-cli"
     }
 
-    async fn transcribe(&self, wav: &Path, language: &str) -> Result<Transcript, TranscriberError> {
+    async fn transcribe(
+        &self,
+        wav: &Path,
+        request: &TranscribeRequest,
+    ) -> Result<Transcript, TranscriberError> {
         // The daemon's language pin is global. Requests are serialized here, so
         // changing it per request cannot race another request.
         let _guard = self.run.lock().await;
-        self.set_language(language).await?;
-
-        let mut command = Command::new(&self.bin);
-        command
-            .arg("transcribe")
-            .arg(wav)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
-        let output = self.wait(command, TRANSCRIBE_TIMEOUT).await?;
-        let ack: TranscribeAck = serde_json::from_slice(&output.stdout).map_err(|error| {
-            TranscriberError::Protocol(format!(
-                "transcribe is not JSON: {error}: {}",
-                String::from_utf8_lossy(&output.stdout).trim()
-            ))
-        })?;
-        if !ack.ok {
-            return Err(TranscriberError::Rejected(
-                ack.error
-                    .unwrap_or_else(|| "the daemon refused the file".to_string()),
-            ));
+        self.set_language(&request.language).await?;
+        if let Some(tone) = request.tone.as_deref() {
+            self.set_tone(tone).await?;
         }
+
+        let deadline = Instant::now() + self.timeout;
+        let ack = loop {
+            let mut command = Command::new(&self.bin);
+            command
+                .arg("transcribe")
+                .arg(wav)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true);
+            let output = self.output(command, TRANSCRIBE_TIMEOUT).await?;
+            let ack: TranscribeAck = match serde_json::from_slice(&output.stdout) {
+                Ok(ack) => ack,
+                Err(error) => {
+                    if !output.status.success() {
+                        let stderr = String::from_utf8_lossy(&output.stderr);
+                        return Err(TranscriberError::Cli(format!(
+                            "{} exited {}: {}: {}",
+                            self.bin.display(),
+                            output.status,
+                            stderr.trim(),
+                            String::from_utf8_lossy(&output.stdout).trim()
+                        )));
+                    }
+                    return Err(TranscriberError::Protocol(format!(
+                        "transcribe is not JSON: {error}: {}",
+                        String::from_utf8_lossy(&output.stdout).trim()
+                    )));
+                }
+            };
+            if ack.ok {
+                break ack;
+            }
+            let error = ack
+                .error
+                .unwrap_or_else(|| "the daemon refused the file".to_string());
+            // Switching the processing mode restarts the workers and the
+            // daemon answers with this until the model is warm. Wait it out
+            // instead of failing the first dictation after the switch.
+            if is_warming(&error) && Instant::now() < deadline {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                continue;
+            }
+            return Err(TranscriberError::Rejected(error));
+        };
         let session_id = ack
             .session_id
             .ok_or_else(|| TranscriberError::Protocol("transcribe has no session_id".into()))?;
 
-        let deadline = Instant::now() + self.timeout;
         loop {
             let status = self.read_status().await?;
             if status.phase == "idle"
@@ -200,7 +254,7 @@ impl Transcriber for SuperwhisperCli {
                     language: last
                         .language
                         .filter(|language| !language.trim().is_empty())
-                        .unwrap_or_else(|| language.to_string()),
+                        .unwrap_or_else(|| request.language.clone()),
                     duration_secs: last.audio_seconds.unwrap_or(0.0),
                 });
             }
@@ -210,5 +264,22 @@ impl Transcriber for SuperwhisperCli {
             }
             tokio::time::sleep(self.poll_interval).await;
         }
+    }
+}
+
+fn is_warming(error: &str) -> bool {
+    let error = error.to_ascii_lowercase();
+    error.contains("not ready") || error.contains("warming")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_warming;
+
+    #[test]
+    fn a_warming_daemon_is_retryable() {
+        assert!(is_warming("Not ready: warming"));
+        assert!(is_warming("not ready"));
+        assert!(!is_warming("no Superwhisper Pro license"));
     }
 }

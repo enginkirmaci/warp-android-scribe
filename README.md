@@ -3,7 +3,9 @@
 A dictation-first Android keyboard with a full English QWERTY layout. Hold (or
 tap) the green key in the top bar, speak, and the transcript is committed into
 the focused field. Audio goes to a small bridge on <nas-name>, which hands it to
-Superwhisper's S1-Voice model through the `superwhisper` CLI.
+Superwhisper's S1-Voice model through the `superwhisper` CLI. The Settings
+screen also reads and edits the parts of the NAS Superwhisper profile that
+change a dictation: language, cleanup tone, vocabulary and processing mode.
 
 ```text
 phone IME ──HTTP/1.1, bearer token──▶ NAS bridge ──CLI──▶ Superwhisper daemon ──▶ S1-Voice
@@ -34,7 +36,7 @@ android-apps/warp-android-scribe/
 ### HTTP API
 
 ```text
-POST /transcribe?lang=tr
+POST /transcribe?lang=tr&tone=semi-formal
 Authorization: Bearer <token>
 Content-Type: audio/wav
 
@@ -46,12 +48,62 @@ Content-Type: audio/wav
 - `lang` is optional: `tr`, `auto`, or any Superwhisper language code. The
   bridge sets the daemon's global language pin immediately before each request,
   under a mutex, so overlapping requests cannot fight over one session.
+- `tone` is optional: `casual`, `semi-casual`, `balanced`, `semi-formal` or
+  `formal`. The bridge validates it and sets the cleanup tone under the same
+  session mutex, immediately after the language pin. Omitted means "leave the
+  profile's tone".
 - `GET /health` (also token-checked) answers the version, the default language
   and the active transcriber; the phone's settings screen uses it as a test.
 - 401 missing/wrong token, 413 too large or too long, 415 non-WAV content type,
   502 the CLI failed or was rejected, 504 the request timed out.
 - Limits: 10 MiB, 120 s of audio, 60 s of processing. The recorded WAV is a
   private temp file and is deleted when the request returns (success or error).
+
+### Settings API
+
+All three endpoints are token-checked and speak JSON. They are the phone's only
+way to read or change the NAS Superwhisper profile.
+
+```text
+GET  /settings
+PUT  /settings/vocabulary   {"terms":["Omarchy"],"replacements":[{"original":"Oh Marchie","with":"Omarchy"}]}
+POST /settings/processing   {"mode":"cloud" | "offline" | "offline_lite"}
+```
+
+`GET /settings` returns:
+
+```json
+{
+  "tone": "semi-formal",
+  "tones": [{"label": "Casual", "value": "casual"}],
+  "languages": [{"label": "Turkish", "value": "tr"}],
+  "vocabulary": {"terms": ["Omarchy"], "replacements": []},
+  "processing": "cloud",
+  "processing_modes": [
+    {"value": "cloud", "label": "Cloud", "download_bytes": 0, "missing": []},
+    {"value": "offline", "label": "Offline", "download_bytes": 2262730392, "missing": []}
+  ],
+  "processing_target": null,
+  "processing_error": null,
+  "download_bytes": 0,
+  "download_total": 0,
+  "download_percent": 0,
+  "models": [{"id": "cleanup", "title": "S1 Mini", "state": "installed", "bytes": 0, "total": 0, "disk_bytes": 367803296}]
+}
+```
+
+`PUT /settings/vocabulary` replaces the whole list: the bridge diffs it against
+`vocab show` and runs only the `vocab add`, `vocab remove`, `vocab replace` and
+`vocab remove-replacement` calls that are needed. Terms are at most 200 entries
+of 64 characters; replacements are at most 100.
+
+`POST /settings/processing` switches to Cloud immediately. For Offline and
+Offline Lite it starts a background task that downloads the missing models one
+at a time and selects the mode when the last one is installed; the request
+returns at once and the phone polls `GET /settings` for `download_percent`.
+While the task runs, `processing_target` names the mode and `processing` stays
+on the old engine, so dictation keeps working. Sending `{"mode":"cloud"}`
+cancels a running download target.
 
 ### Configuration
 
@@ -171,7 +223,7 @@ adb shell ime set    com.engin.warpandroidscribe/.ScribeImeService
 ### Settings
 
 The launcher activity is the settings screen. It stores the mode, the token,
-both server URLs, the dictation language and the shortcuts in the app's private
+both server URLs, the dictation language, the tone and the shortcuts in the app's private
 `SharedPreferences` (the token is only as protected as the app sandbox; there
 is no keystore yet) and offers:
 
@@ -182,11 +234,17 @@ is no keystore yet) and offers:
   `GET /health`;
 - the Android 17 local-network permission for the Local mode (the remote route
   does not need it);
-- the dictation language: a drop-down list of supported language codes plus
-  `Auto-detect`; Turkish is the initial default but any listed language can be
-  chosen;
-- a comma-separated list of slash-command shortcuts shown above the compact
-  keyboard;
+- the dictation language: all 103 languages Superwhisper 1.2.0 exposes, with a
+  filter field in the picker; Turkish is the initial default;
+- the cleanup tone: Casual, Semi-casual, Balanced, Semi-formal or Formal. The
+  phone sends it on every request, so it wins over the NAS profile's tone;
+- the server profile's vocabulary: word chips with add/remove, simple
+  `heard → write` replacements, and one **Save vocabulary** button that PUTs
+  the whole list;
+- the processing mode: Cloud, Offline or Offline Lite, with the download size,
+  a progress bar and a cancel button. The bridge downloads missing models to
+  the NAS in the background and switches when they are ready;
+- a comma-separated list of slash commands shown above the compact keyboard;
 - the system input-method settings/picker and the microphone permission.
 
 ### Keyboard
@@ -209,6 +267,10 @@ is no keystore yet) and offers:
   `qwertyuiop`, `asdfghjkl`, `zxcvbnm`, shift/backspace, `?123`,
   space/enter); the same icon returns to the compact surface. The compact
   layout is the default on every keyboard show; the full switch is temporary.
+- The Enter key follows the focused editor: when it declares a send action the
+  key shows `↑` and performs that action, so Enter sends in a chat composer;
+  plain and multiline fields still get a newline. The system's own app actions
+  (go, search, done) use the same path.
 - There is no **Local/Remote** chip on the keyboard. The mode lives in
   Settings, opened by long-pressing the keyboard icon. A recording replaces
   the keyboard icon with a cancel `X`; a quick tap locks the recording, a hold
@@ -264,6 +326,19 @@ denied or the phone is away from the LAN. The bridge port is `8787` because
   activating Pro on the NAS is a follow-up, not a code change.
 - Superwhisper's language pin is global to the profile. The bridge serializes
   requests and sets it per request; the NAS bridge is a dedicated profile.
+- Tone travels with each request (`?tone=`), like the language pin, so changing
+  it in the phone's Settings does not depend on a second write endpoint. The
+  bridge sets it inside the same session mutex.
+- Vocabulary is the one server-wide setting the phone edits: terms and
+  replacements are saved in the NAS profile, so every dictation there sees
+  them. Replacements apply in Cloud and Offline; terms are matched by the
+  Offline acoustic vocabulary, which is why the Offline models are worth the
+  2.5 GB.
+- Processing is server-wide. The phone starts the download and polls; the
+  bridge keeps the old engine selected until every model for the target mode is
+  installed, so a dictation during the download still works.
+- The Enter key is editor-aware: a declared send action turns it into the send
+  key (`↑`) and sends; otherwise it stays a newline Enter.
 - Android 17: the app targets SDK 37, so LAN traffic needs
   `ACCESS_LOCAL_NETWORK`; the settings screen requests it. The Cloudflare
   endpoint is the no-permission path.
@@ -301,3 +376,12 @@ denied or the phone is away from the LAN. The bridge port is `8787` because
   keys and the panel by the navigation-bar height, so nothing is hidden under
   it.
 - The Android build is a debug APK; release signing is not set up yet.
+- Offline + Offline Lite models occupy about 2.7 GB on the NAS. The first
+  dictation after switching to Offline waits for the workers to warm (about
+  20 s); the bridge retries the warming response instead of failing, but the
+  request is slow once.
+- Cloud mode does not correct vocabulary terms; replacements do. Offline terms
+  work because the acoustic vocabulary model is installed. The vocabulary card
+  says so.
+- The phone's tone is sent on every request, so it overrides a tone set in the
+  NAS Superwhisper window; the NAS is a dedicated profile.

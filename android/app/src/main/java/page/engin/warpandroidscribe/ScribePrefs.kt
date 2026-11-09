@@ -40,6 +40,21 @@ class ScribePrefs(context: Context) {
                 .apply()
         }
 
+    /**
+     * The cleanup tone sent with every request. It lives on the phone, not in
+     * the server profile, so the keyboard keeps the owner's choice even when
+     * the NAS Superwhisper window changes it.
+     */
+    var tone: String
+        get() = prefs.getString(KEY_TONE, DEFAULT_TONE)
+            ?.takeIf(::isSupportedTone)
+            ?: DEFAULT_TONE
+        set(value) {
+            prefs.edit()
+                .putString(KEY_TONE, if (isSupportedTone(value)) value else DEFAULT_TONE)
+                .apply()
+        }
+
     var localUrl: String
         get() = prefs.getString(KEY_LOCAL_URL, null) ?: DEFAULT_LOCAL_URL
         set(value) {
@@ -81,6 +96,7 @@ class ScribePrefs(context: Context) {
         mode: ConnectionMode,
         token: String,
         language: String,
+        tone: String,
         shortcuts: String,
         localUrl: String,
         remoteUrl: String,
@@ -88,6 +104,7 @@ class ScribePrefs(context: Context) {
         .putString(KEY_MODE, mode.key)
         .putString(KEY_TOKEN, token.trim())
         .putString(KEY_LANGUAGE, if (isSupportedLanguage(language)) language else DEFAULT_LANGUAGE)
+        .putString(KEY_TONE, if (isSupportedTone(tone)) tone else DEFAULT_TONE)
         .putString(KEY_SHORTCUTS, shortcuts.trim())
         .putString(KEY_LOCAL_URL, localUrl.trim().trimEnd('/'))
         .putString(KEY_REMOTE_URL, remoteUrl.trim().trimEnd('/'))
@@ -123,6 +140,7 @@ class ScribePrefs(context: Context) {
         private const val KEY_MODE = "mode"
         private const val KEY_TOKEN = "token"
         private const val KEY_LANGUAGE = "language"
+        private const val KEY_TONE = "tone"
         private const val KEY_TLS_LEGACY = "tls"
         private const val KEY_RECENT = "recent_transcripts"
         private const val KEY_SHORTCUTS = "shortcuts"

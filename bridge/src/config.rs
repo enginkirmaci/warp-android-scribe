@@ -12,6 +12,7 @@ pub const DEFAULT_MAX_AUDIO_BYTES: usize = 10 * 1024 * 1024;
 pub const DEFAULT_MAX_AUDIO_SECS: f64 = 120.0;
 pub const DEFAULT_LANGUAGE: &str = "tr";
 pub const MIN_TOKEN_LEN: usize = 16;
+pub const TONES: [&str; 5] = ["casual", "semi-casual", "balanced", "semi-formal", "formal"];
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -39,6 +40,8 @@ pub enum ConfigError {
     Zero { name: &'static str },
     #[error("language {0:?} is not a language code or `auto`")]
     Language(String),
+    #[error("{0:?} is not a Superwhisper tone")]
+    Tone(String),
 }
 
 impl Config {
@@ -104,6 +107,16 @@ pub fn validate_language(value: &str) -> Result<String, ConfigError> {
     }
 }
 
+/// Accepts one of the five cleanup tones the Superwhisper profile exposes.
+pub fn validate_tone(value: &str) -> Result<String, ConfigError> {
+    let value = value.trim().to_ascii_lowercase();
+    if TONES.contains(&value.as_str()) {
+        Ok(value)
+    } else {
+        Err(ConfigError::Tone(value))
+    }
+}
+
 fn env_number(name: &'static str, default: String) -> Result<String, ConfigError> {
     Ok(env::var(name).unwrap_or(default))
 }
@@ -156,5 +169,21 @@ mod tests {
     #[test]
     fn auto_is_normalized_to_lowercase() {
         assert_eq!(validate_language("AUTO").unwrap(), "auto");
+    }
+
+    #[test]
+    fn tone_accepts_the_profile_values() {
+        for value in TONES {
+            assert_eq!(validate_tone(value).unwrap(), value);
+        }
+        assert_eq!(validate_tone("FORMAL").unwrap(), "formal");
+        assert_eq!(validate_tone("  formal  ").unwrap(), "formal");
+    }
+
+    #[test]
+    fn tone_rejects_junk() {
+        for value in ["", "friendly", "formal!"] {
+            assert!(validate_tone(value).is_err(), "{value}");
+        }
     }
 }
