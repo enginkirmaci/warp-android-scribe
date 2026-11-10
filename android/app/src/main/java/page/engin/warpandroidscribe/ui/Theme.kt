@@ -12,6 +12,9 @@ object ScribeColors {
     val Background = Color(0xFF0B0D10)
     val Surface = Color(0xFF14181E)
     val Key = Color(0xFF1A1E24)
+    /** The action keys a dictation leans on: space, enter, delete. */
+    val KeyRaised = Color(0xFF232A34)
+    val KeyRaisedEdge = Color(0xFF323B49)
     val Text = Color(0xFFE5E7EB)
     val Muted = Color(0xFF9CA3AF)
     val Green = Color(0xFF22C55E)

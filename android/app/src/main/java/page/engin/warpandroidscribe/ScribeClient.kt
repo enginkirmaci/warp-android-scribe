@@ -29,6 +29,18 @@ data class ProcessingMode(
     val missing: List<String>,
 )
 
+data class EngineInfo(
+    val id: String,
+    val label: String,
+    val ready: Boolean,
+    val detail: String,
+)
+
+data class EngineCatalog(
+    val default: String,
+    val engines: List<EngineInfo>,
+)
+
 data class ServerSettings(
     val tone: String,
     val tones: List<ToneOption>,
@@ -53,9 +65,15 @@ class ScribeClient(private val prefs: ScribePrefs) {
 
     data class Result(val text: String, val language: String, val duration: Double)
 
-    fun transcribe(file: File, language: String, tone: String): Result {
+    fun transcribe(
+        file: File,
+        language: String,
+        tone: String,
+        engine: String = TranscriptionEngine.SUPERWHISPER.id,
+    ): Result {
         val query = buildString {
-            append("lang=").append(language)
+            append("engine=").append(engine)
+            append("&lang=").append(language)
             if (tone.isNotBlank()) append("&tone=").append(tone)
         }
         val request = Request.Builder()
@@ -98,6 +116,37 @@ class ScribeClient(private val prefs: ScribePrefs) {
             val payload = response.body.string()
             if (!response.isSuccessful) throw failure(response.code, payload)
             return parseSettings(payload)
+        }
+    }
+
+    /** The engines the bridge can route a request to, and the one it defaults to. */
+    fun engines(): EngineCatalog {
+        val request = Request.Builder()
+            .url("${prefs.endpoint}/engines")
+            .header("Authorization", "Bearer ${prefs.token}")
+            .build()
+        client.newCall(request).execute().use { response ->
+            val payload = response.body.string()
+            if (!response.isSuccessful) throw failure(response.code, payload)
+            val json = runCatching { JSONObject(payload) }
+                .getOrElse { throw ScribeException("The server did not return engines.") }
+            val engines = json.optJSONArray("engines").toStringListOfObjects().mapNotNull { item ->
+                val id = item.optString("id")
+                if (id.isBlank()) {
+                    null
+                } else {
+                    EngineInfo(
+                        id = id,
+                        label = item.optString("label", id),
+                        ready = item.optBoolean("ready", true),
+                        detail = item.optString("detail", ""),
+                    )
+                }
+            }
+            return EngineCatalog(
+                default = json.optString("default", engines.firstOrNull()?.id.orEmpty()),
+                engines = engines,
+            )
         }
     }
 
@@ -200,7 +249,7 @@ class ScribeClient(private val prefs: ScribePrefs) {
             400 -> "The server rejected a setting (400)."
             409 -> "A processing change is already running (409)."
             413 -> "The audio is too long or too large (413)."
-            502 -> "The server could not reach Superwhisper (502)."
+            502 -> "The server could not reach the transcription engine (502)."
             504 -> "The server timed out (504)."
             else -> "Server error ($code)."
         }

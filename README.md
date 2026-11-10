@@ -3,14 +3,16 @@
 A dictation-first Android keyboard with a full English QWERTY layout. Hold (or
 tap) the green key in the top bar, speak, and the transcript is committed into
 the focused field. Audio goes to a small bridge on <nas-name>, which hands it to
-Superwhisper's S1-Voice model through the `superwhisper` CLI. The Settings
-screen also reads and edits the parts of the NAS Superwhisper profile that
-change a dictation: language, cleanup tone, vocabulary and processing mode.
+one of two engines, chosen per request from the phone's Settings: Superwhisper
+through its `superwhisper` CLI, or Hex through `hex model transcribe` with
+Whisper large-v3-turbo. Superwhisper's profile (language, cleanup tone,
+vocabulary and processing mode) can be read and edited from the same Settings
+screen; Hex takes only the language, because it has no profile to edit.
 
 ```text
 phone IME ──HTTP/1.1, bearer token──▶ NAS bridge ──CLI──▶ Superwhisper daemon ──▶ S1-Voice
-   │                                      │
-   └─ 16 kHz mono WAV, ≤ 10 MB / 120 s     └─ /transcribe?lang=tr, poll status, return text
+   │                                      │        └──CLI──▶ Hex ──▶ Whisper large-v3-turbo
+   └─ 16 kHz mono WAV, ≤ 10 MB / 120 s     └─ /transcribe?engine=hex&lang=tr, return text
 ```
 
 The Android app is deliberately not part of the suite's desktop release: it is
@@ -24,8 +26,8 @@ gate compiles and tests it.
 android-apps/warp-android-scribe/
   bridge/                       # warp-android-scribe-bridge (Rust, axum + tokio)
     src/{main,lib,api,config,wav}.rs
-    src/transcriber/{mod,superwhisper}.rs
-    tests/{api_probe,superwhisper_cli_probe}.rs
+    src/transcriber/{mod,superwhisper,hex}.rs
+    tests/{api_probe,superwhisper_cli_probe,hex_cli_probe}.rs
   android/                      # Gradle project, Kotlin + Compose IME
     app/src/main/java/com/engin/warpandroidscribe/
   deploy/                       # systemd unit + env example
@@ -36,7 +38,7 @@ android-apps/warp-android-scribe/
 ### HTTP API
 
 ```text
-POST /transcribe?lang=tr&tone=semi-formal
+POST /transcribe?engine=hex&lang=tr&tone=semi-formal
 Authorization: Bearer <token>
 Content-Type: audio/wav
 
@@ -45,15 +47,25 @@ Content-Type: audio/wav
 200 {"text":"...","language":"tr","duration":5.83}
 ```
 
-- `lang` is optional: `tr`, `auto`, or any Superwhisper language code. The
-  bridge sets the daemon's global language pin immediately before each request,
-  under a mutex, so overlapping requests cannot fight over one session.
+- `engine` is optional: `superwhisper` or `hex`. Omitted means the bridge's
+  configured default (`WARP_SCRIBE_TRANSCRIBER`). An engine the bridge does not
+  hold is a 400 `unknown_engine`; a bridge with a single engine (the mock) answers
+  every name with that engine.
+- `lang` is optional: `tr`, `auto`, or any Superwhisper language code. For
+  Superwhisper the bridge sets the daemon's global language pin immediately
+  before each request, under a mutex, so overlapping requests cannot fight over
+  one session. Hex takes the language on its command line; a regional code
+  (`en-GB`) narrows to its base (`en`) and `auto` is passed through.
 - `tone` is optional: `casual`, `semi-casual`, `balanced`, `semi-formal` or
   `formal`. The bridge validates it and sets the cleanup tone under the same
   session mutex, immediately after the language pin. Omitted means "leave the
-  profile's tone".
+  profile's tone". Hex has no cleanup step for a file, so the tone is ignored
+  when `engine=hex`.
 - `GET /health` (also token-checked) answers the version, the default language
-  and the active transcriber; the phone's settings screen uses it as a test.
+  and the configured engines; the phone's settings screen uses it as a test.
+- `GET /engines` (token-checked) answers the default engine and every engine the
+  bridge holds, with `ready` and a `detail` line (the Hex version and path, or
+  "was not found"). The Settings screen renders its engine picker from it.
 - 401 missing/wrong token, 413 too large or too long, 415 non-WAV content type,
   502 the CLI failed or was rejected, 504 the request timed out.
 - Limits: 10 MiB, 120 s of audio, 60 s of processing. The recorded WAV is a
@@ -116,8 +128,10 @@ required and must be at least 16 characters; generate it with
 |---|---|---|
 | `WARP_SCRIBE_ADDR` | `0.0.0.0:8787` | Listen address; 8765 is already taken on the NAS |
 | `WARP_SCRIBE_TOKEN` | — | Bearer token (required) |
-| `WARP_SCRIBE_TRANSCRIBER` | `superwhisper-cli` | `superwhisper-cli` or `mock` |
+| `WARP_SCRIBE_TRANSCRIBER` | `superwhisper-cli` | Default engine: `superwhisper-cli`, `hex-cli` or `mock` |
 | `WARP_SCRIBE_SUPERWHISPER_BIN` | `superwhisper` | CLI path |
+| `WARP_SCRIBE_HEX_BIN` | `hex` | Hex CLI path |
+| `WARP_SCRIBE_HEX_MODEL` | `whisper_large_v3_turbo` | Model Hex transcribes with |
 | `WARP_SCRIBE_TIMEOUT_SECS` | `60` | Whole request budget |
 | `WARP_SCRIBE_LANGUAGE` | `tr` | Default when the request omits `lang` |
 | `WARP_SCRIBE_MAX_AUDIO_BYTES` | `10485760` | Request body limit |
@@ -128,6 +142,18 @@ required and must be at least 16 characters; generate it with
 The bridge needs a running `superwhisper.service` in the same user manager.
 The NAS profile is currently on Superwhisper's free cloud quota; activate Pro
 there for sustained use. The install steps used here:
+
+Hex is optional. Its Linux installer is user-local and needs no root:
+
+```sh
+curl -fsSL https://anoma.ly/hex/files/install-linux.sh | sh
+hex model install whisper_large_v3_turbo
+```
+
+Then point `WARP_SCRIBE_HEX_BIN` at the absolute binary: a systemd user service
+does not see `~/.local/bin` on its `PATH` unless the unit sets it. The bridge
+probes `hex --version` at startup, and `GET /engines` (and the phone's Settings
+screen) reports the version it found or that the binary is missing.
 
 ```sh
 # Build on the desktop, install on the NAS.
@@ -186,8 +212,11 @@ cargo clippy --locked --all-targets -p warp-android-scribe-bridge -- -D warnings
 ```
 
 `tests/superwhisper_cli_probe.rs` drives a fake `superwhisper` shell script and
-checks the session-id polling, refusals and timeout. `tests/api_probe.rs` covers
-auth, size/duration limits, temp-file cleanup and the 502/504 mapping.
+checks the session-id polling, refusals and timeout. `tests/hex_cli_probe.rs`
+does the same for `hex model transcribe`: the arguments it builds, the regional
+language narrowing, exit 4 (no speech), a refusal and a hung process.
+`tests/api_probe.rs` covers auth, size/duration limits, temp-file cleanup, the
+engine routing and the 502/504 mapping.
 
 ## The Android app
 
@@ -258,28 +287,35 @@ selected, and `SETUP` otherwise.
 
 - The keyboard opens in a compact dictation/prompt layout. The error line is
   the first row, so no panel can hide it; under it the clipboard bar, then the
-  top bar. The top bar, left to right: the keyboard icon, the green **Dictate**
-  pill with its trailing language segment (`TR`, `EN-GB`, `AUTO`, …) and the
-  delete key to its right in both layouts. The keyboard icon switches to the
-  full QWERTY; long-press opens Settings. Tapping the language segment opens
-  the in-keyboard language panel, using the same list as Settings.
+  top bar. In every layout the top bar is the green **Dictate** pill alone,
+  with its leading language segment (`TR`, `EN-GB`, `AUTO`, …); Cancel joins it
+  while a recording runs. The keyboard icon sits left of enter, and delete ends
+  the row above: the quick-insert row in compact, the shift row in full, the
+  last symbol row in symbols. The keyboard icon switches layouts; long-press
+  opens Settings. Tapping the language segment opens the in-keyboard language
+  panel, using the same list as Settings.
 - After a transcript lands the pill reads **Inserted** for four seconds and the
   segment becomes **Undo**, which deletes exactly the code points that
   dictation inserted. The confirmation costs no extra row.
 - Under the top bar, the app-configured shortcut row shows slash commands
   (`/goal`, `/compact` by default). Tapping inserts the command plus a space;
-  edit the comma-separated list in Settings.
+  edit the comma-separated list in Settings. The row scrolls sideways, and
+  delete stays pinned at its right edge however long the commands are.
 - The clipboard bar above the top bar: the clipboard button at the left, then a
   single horizontal row of clip boxes; tap one to insert it. The bar stays
   while a panel is open, so the button never moves.
-- The compact body: cursor arrows (hold to repeat), the unlabelled space bar,
-  the emoji key and enter, then icon buttons for `Undo`, `Cut`, `Copy` and
-  `Paste`. Delete is the top-bar key (hold to repeat); there is no backspace
-  beside the arrows or in the full layout's letter row. Vibration is off.
-- The keyboard icon opens the full English QWERTY (number row,
-  `qwertyuiop`, `asdfghjkl`, `zxcvbnm`, shift, `?123`, space/emoji/enter);
-  the same icon returns to the compact surface. The compact
-  layout is the default on every keyboard show; the full switch is temporary.
+- The compact body is the shortcut row plus one key row, left to right: the
+  emoji key, the unlabelled space bar, a period key, the keyboard toggle and
+  enter. Delete lives at the right end of the shortcut row (hold to repeat).
+  There are no cursor arrows and no editor row (undo/cut/copy/paste) under the
+  keys. Vibration is off.
+- The full English QWERTY follows the same rules: number row, `qwertyuiop`,
+  `asdfghjkl`, then shift and `zxcvbnm` with delete at that row's right end,
+  and a bottom row of `?123`, comma, emoji, space, period, the keyboard toggle
+  and enter. The symbols view (`?123`) keeps its three symbol rows, with delete
+  at the end of the last one, and an `ABC`/space/toggle/enter bottom row. The
+  compact layout is the default on every keyboard show; the full switch is
+  temporary.
   Shift applies to one letter; a second tap within 300 ms locks it, and the
   locked key shows a small bar under the arrow.
 - The Enter key follows the focused editor: when it declares a send action the
@@ -329,16 +365,26 @@ denied or the phone is away from the LAN. The bridge port is `8787` because
 
 ## Decisions
 
+- Engine: the bridge holds both Superwhisper and Hex and the phone picks one per
+  request (`?engine=`), so a failed experiment with Hex does not need a server
+  rollback. Superwhisper stays the default; Hex is selected in Settings, which
+  also shows whether the server found its CLI. The tone, vocabulary and
+  processing cards disappear while Hex is selected because those belong to the
+  Superwhisper profile and Hex never reads them.
+- Hex model: `whisper_large_v3_turbo`, the multilingual model the owner already
+  runs. `hex model transcribe` takes `--model` and `--language`, so the bridge
+  passes both on every call instead of touching Hex's own picker.
 - Language: Turkish by default, with a selectable list of supported dictation
   languages and `Auto-detect`. In a NAS test the same short Turkish sentence
   came back as English gibberish with `auto`, and correctly with `tr` in
   ~0.4 s; the pill segment shows the selected code and opens the language
   panel.
-- Layout: compact dictation/prompt surface by default; the left-hand keyboard
-  icon opens the full English QWERTY and returns. The top bar is keyboard
-  icon, the Dictate pill carrying the language segment, clipboard and the
-  compact delete key. Quick inserts come from Settings.
-  No mode chip, no fixed starter row, vibration off, no bottom transcript
+- Layout: compact dictation/prompt surface by default; the keyboard icon in
+  the key row opens the full English QWERTY and returns. The compact top bar is
+  the Dictate pill alone, its language segment on the left; the row under it is
+  the scrolling quick inserts with delete pinned right, then emoji, space,
+  period, keyboard toggle and enter. Quick inserts come from Settings. No mode chip, no
+  cursor arrows, no fixed starter row, vibration off, no bottom transcript
   strip.
 - Connection: one token, two modes with editable URLs. The initial Local URL is
   `http://<nas-lan>:8787`, the initial Remote URL is
@@ -377,6 +423,17 @@ denied or the phone is away from the LAN. The bridge port is `8787` because
 
 ## Known limits
 
+- Hex runs its model inside the CLI process: every dictation pays a model load
+  (about a second from page cache on a desktop; longer on a cold NAS disk).
+  With no GPU on the NAS the inference itself is CPU-bound, so a long dictation
+  can approach the request budget; raise `WARP_SCRIBE_TIMEOUT_SECS` if needed.
+- Hex has no tone step for a file: `?tone=` is accepted and ignored when
+  `engine=hex`, and the phone hides the tone picker for that engine. Silence can
+  come back as a short hallucination ("Thank you."), so the keyboard's own
+  record-length check is the only guard today.
+- `GET /settings` and the vocabulary/processing endpoints stay Superwhisper
+  only. With Hex selected the app does not call them; a bridge with no
+  Superwhisper installed still works, it just reports a not-ready engine.
 - Cloud dictation sends the audio to Superwhisper's servers; it needs internet.
 - The free quota is shared per Superwhisper device/profile. Pro is required for
   sustained use.
@@ -389,8 +446,6 @@ denied or the phone is away from the LAN. The bridge port is `8787` because
   chat composer usually does, a plain text field does not.
 - Mode is only in Settings now; long-press the keyboard icon. The compact
   layout is restored on every keyboard show; the full layout is not remembered.
-- Undo/cut/paste are best-effort: `performContextMenuAction` first, then
-  Ctrl+Z/X; editors that support neither simply ignore them.
 - The full clipboard view has filters but no search. Searching an IME-internal
   list needs the full QWERTY routed into the IME's own query instead of the
   app's input connection; that is a separate v2 change.

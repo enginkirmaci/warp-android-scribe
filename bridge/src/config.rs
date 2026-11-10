@@ -13,6 +13,10 @@ pub const DEFAULT_MAX_AUDIO_SECS: f64 = 120.0;
 pub const DEFAULT_LANGUAGE: &str = "tr";
 pub const MIN_TOKEN_LEN: usize = 16;
 pub const TONES: [&str; 5] = ["casual", "semi-casual", "balanced", "semi-formal", "formal"];
+pub const DEFAULT_HEX_BIN: &str = "hex";
+pub const DEFAULT_HEX_MODEL: &str = "whisper_large_v3_turbo";
+/// The engines the bridge can build; `mock` is exclusive and for development.
+pub const TRANSCRIBERS: [&str; 3] = ["superwhisper-cli", "hex-cli", "mock"];
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -20,6 +24,8 @@ pub struct Config {
     pub token: String,
     pub transcriber: String,
     pub superwhisper_bin: PathBuf,
+    pub hex_bin: PathBuf,
+    pub hex_model: String,
     pub timeout: Duration,
     pub max_audio_bytes: usize,
     pub max_audio_secs: f64,
@@ -42,6 +48,8 @@ pub enum ConfigError {
     Language(String),
     #[error("{0:?} is not a Superwhisper tone")]
     Tone(String),
+    #[error("{value:?} is not a transcriber; use one of {choices}")]
+    Transcriber { value: String, choices: String },
 }
 
 impl Config {
@@ -62,9 +70,24 @@ impl Config {
 
         let transcriber =
             env::var("WARP_SCRIBE_TRANSCRIBER").unwrap_or_else(|_| "superwhisper-cli".to_string());
+        let transcriber = transcriber.trim().to_ascii_lowercase();
+        if !TRANSCRIBERS.contains(&transcriber.as_str()) {
+            return Err(ConfigError::Transcriber {
+                value: transcriber,
+                choices: TRANSCRIBERS.join(", "),
+            });
+        }
         let superwhisper_bin = env::var_os("WARP_SCRIBE_SUPERWHISPER_BIN")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("superwhisper"));
+        let hex_bin = env::var_os("WARP_SCRIBE_HEX_BIN")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_HEX_BIN));
+        let hex_model = env::var("WARP_SCRIBE_HEX_MODEL")
+            .map(|model| model.trim().to_string())
+            .ok()
+            .filter(|model| !model.is_empty())
+            .unwrap_or_else(|| DEFAULT_HEX_MODEL.to_string());
 
         let timeout_secs = parse_u64("WARP_SCRIBE_TIMEOUT_SECS", DEFAULT_TIMEOUT_SECS)?;
         let max_audio_bytes = parse_usize("WARP_SCRIBE_MAX_AUDIO_BYTES", DEFAULT_MAX_AUDIO_BYTES)?;
@@ -78,6 +101,8 @@ impl Config {
             token,
             transcriber,
             superwhisper_bin,
+            hex_bin,
+            hex_model,
             timeout: Duration::from_secs(timeout_secs),
             max_audio_bytes,
             max_audio_secs,

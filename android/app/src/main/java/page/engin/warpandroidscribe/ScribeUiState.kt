@@ -11,6 +11,17 @@ enum class ConnectionMode(val label: String) {
     REMOTE("UZAK"),
 }
 
+/** Which server-side engine turns the recording into text. */
+enum class TranscriptionEngine(val id: String, val label: String) {
+    SUPERWHISPER("superwhisper", "Superwhisper"),
+    HEX("hex", "Hex");
+
+    companion object {
+        fun fromId(id: String?): TranscriptionEngine =
+            entries.firstOrNull { it.id == id } ?: SUPERWHISPER
+    }
+}
+
 enum class Phase { IDLE, RECORDING, TRANSCRIBING, ERROR }
 
 enum class ClipKind { TEXT, IMAGE, TRANSCRIPT }
@@ -69,11 +80,6 @@ class ScribeActions(
     val onToggleEmoji: () -> Unit,
     val onSelectLanguage: (String) -> Unit,
     val onToggleLayout: () -> Unit,
-    val onUndo: () -> Unit,
-    val onCut: () -> Unit,
-    val onCopy: () -> Unit,
-    val onPaste: () -> Unit,
-    val onMoveCursor: (Int) -> Unit,
     val onToggleClipboard: () -> Unit,
     val onExpandClipboard: () -> Unit,
     val onCloseClipboard: () -> Unit,

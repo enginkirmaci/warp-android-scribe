@@ -78,11 +78,6 @@ class ScribeImeService : InputMethodService() {
             onToggleEmoji = ::toggleEmoji,
             onSelectLanguage = ::selectLanguage,
             onToggleLayout = ::toggleLayout,
-            onUndo = ::undo,
-            onCut = ::cut,
-            onCopy = ::copy,
-            onPaste = ::pasteCurrent,
-            onMoveCursor = ::moveCursor,
             onToggleClipboard = ::toggleClipboard,
             onExpandClipboard = ::expandClipboard,
             onCloseClipboard = ::closeClipboard,
@@ -407,8 +402,9 @@ class ScribeImeService : InputMethodService() {
 
             val language = ui.language
             val tone = prefs.tone
+            val engine = prefs.engine.id
             val result = withContext(Dispatchers.IO) {
-                runCatching { client.transcribe(file, language, tone) }
+                runCatching { client.transcribe(file, language, tone, engine) }
             }
             result.onSuccess { transcript ->
                 file.delete()
@@ -436,8 +432,9 @@ class ScribeImeService : InputMethodService() {
         transcribeJob = scope.launch {
             val language = ui.language
             val tone = prefs.tone
+            val engine = prefs.engine.id
             val result = withContext(Dispatchers.IO) {
-                runCatching { client.transcribe(file, language, tone) }
+                runCatching { client.transcribe(file, language, tone, engine) }
             }
             result.onSuccess { transcript ->
                 file.delete()
@@ -588,69 +585,6 @@ class ScribeImeService : InputMethodService() {
         haptic(HapticFeedbackConstants.KEYBOARD_TAP)
     }
 
-    private fun undo() {
-        val connection = currentInputConnection ?: return
-        if (!connection.performContextMenuAction(android.R.id.undo)) {
-            sendCtrl(connection, KeyEvent.KEYCODE_Z)
-        }
-        haptic(HapticFeedbackConstants.KEYBOARD_TAP)
-    }
-
-    private fun cut() {
-        val connection = currentInputConnection ?: return
-        if (connection.performContextMenuAction(android.R.id.selectAll)) {
-            if (!connection.performContextMenuAction(android.R.id.cut)) {
-                sendCtrl(connection, KeyEvent.KEYCODE_X)
-            }
-        } else {
-            sendCtrl(connection, KeyEvent.KEYCODE_A)
-            sendCtrl(connection, KeyEvent.KEYCODE_X)
-        }
-        haptic(HapticFeedbackConstants.KEYBOARD_TAP)
-    }
-
-    private fun copy() {
-        val connection = currentInputConnection ?: return
-        if (connection.performContextMenuAction(android.R.id.selectAll)) {
-            if (!connection.performContextMenuAction(android.R.id.copy)) {
-                sendCtrl(connection, KeyEvent.KEYCODE_C)
-            }
-        } else {
-            sendCtrl(connection, KeyEvent.KEYCODE_A)
-            sendCtrl(connection, KeyEvent.KEYCODE_C)
-        }
-        haptic(HapticFeedbackConstants.KEYBOARD_TAP)
-    }
-
-    private fun pasteCurrent() {
-        val clip = runCatching { clipboard.primaryClip }.getOrNull()
-        if (clip == null || clip.itemCount == 0) {
-            showError("Clipboard is empty.")
-            return
-        }
-        scope.launch {
-            val entry = withContext(Dispatchers.IO) { collectClips(clip).firstOrNull() }
-            if (entry == null) {
-                showError("There is nothing in the clipboard to paste.")
-            } else {
-                insertEntry(entry)
-            }
-        }
-    }
-
-    private fun moveCursor(direction: Int) {
-        val connection = currentInputConnection ?: return
-        val keyCode = if (direction < 0) {
-            KeyEvent.KEYCODE_DPAD_LEFT
-        } else {
-            KeyEvent.KEYCODE_DPAD_RIGHT
-        }
-        val now = SystemClock.uptimeMillis()
-        connection.sendKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, keyCode, 0))
-        connection.sendKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, keyCode, 0))
-        haptic(HapticFeedbackConstants.KEYBOARD_TAP)
-    }
-
     private fun toggleClipboard() {
         // Opening the panel mid-dictation hid the timer while the microphone
         // kept running; the top bar now dims the button, and this is the
@@ -784,16 +718,6 @@ class ScribeImeService : InputMethodService() {
         connection.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
         connection.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
         haptic(HapticFeedbackConstants.KEYBOARD_TAP)
-    }
-
-    private fun sendCtrl(connection: InputConnection, keyCode: Int) {
-        val now = SystemClock.uptimeMillis()
-        connection.sendKeyEvent(
-            KeyEvent(now, now, KeyEvent.ACTION_DOWN, keyCode, 0, KeyEvent.META_CTRL_ON),
-        )
-        connection.sendKeyEvent(
-            KeyEvent(now, now, KeyEvent.ACTION_UP, keyCode, 0, KeyEvent.META_CTRL_ON),
-        )
     }
 
     private fun insertText(text: String) {

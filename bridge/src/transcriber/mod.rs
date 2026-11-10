@@ -4,8 +4,10 @@ use std::{path::Path, sync::Mutex, time::Duration};
 
 use async_trait::async_trait;
 
+pub mod hex;
 pub mod superwhisper;
 
+pub use hex::HexCli;
 pub use superwhisper::SuperwhisperCli;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -17,7 +19,8 @@ pub struct Transcript {
 
 /// What the bridge asks the transcriber for on one request. The language pin
 /// and tone are both global to the Superwhisper profile, so they travel with
-/// the request and the CLI sets them under its session mutex.
+/// the request and the CLI sets them under its session mutex. Hex has neither
+/// pin: it takes the language on the command line and ignores the tone.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TranscribeRequest {
     pub language: String,
@@ -26,13 +29,13 @@ pub struct TranscribeRequest {
 
 #[derive(Debug, thiserror::Error)]
 pub enum TranscriberError {
-    #[error("superwhisper CLI failed: {0}")]
+    #[error("the transcription CLI failed: {0}")]
     Cli(String),
-    #[error("superwhisper rejected the transcription: {0}")]
+    #[error("the transcription engine rejected the request: {0}")]
     Rejected(String),
-    #[error("timed out waiting for superwhisper")]
+    #[error("timed out waiting for the transcription engine")]
     Timeout,
-    #[error("invalid superwhisper response: {0}")]
+    #[error("invalid transcription response: {0}")]
     Protocol(String),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),

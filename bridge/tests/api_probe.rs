@@ -10,7 +10,7 @@ use serde_json::Value;
 use tempfile::TempDir;
 use tower::ServiceExt;
 use warp_android_scribe_bridge::{
-    api::{AppState, router},
+    api::{AppState, Engine, router},
     transcriber::MockTranscriber,
 };
 
@@ -269,4 +269,98 @@ async fn a_non_wav_content_type_is_rejected() {
         .unwrap();
     let response = app.oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+}
+
+#[tokio::test]
+async fn lists_the_configured_engines() {
+    let work = TempDir::new().unwrap();
+    let app = router(state(Arc::new(MockTranscriber::new("x")), &work));
+
+    let (status, body) = get(app, Some(TOKEN), "/engines").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["default"], "mock");
+    assert_eq!(body["engines"][0]["id"], "mock");
+    assert_eq!(body["engines"][0]["label"], "Mock");
+    assert_eq!(body["engines"][0]["ready"], true);
+}
+
+fn two_engines(
+    work: &TempDir,
+    superwhisper: Arc<MockTranscriber>,
+    hex: Arc<MockTranscriber>,
+) -> Router {
+    router(
+        AppState::new(superwhisper, TOKEN, Duration::from_secs(2))
+            .with_work_dir(work.path())
+            .with_engine(Engine::new("hex", "Hex", hex)),
+    )
+}
+
+#[tokio::test]
+async fn routes_a_request_to_the_engine_it_names() {
+    let work = TempDir::new().unwrap();
+    let superwhisper = Arc::new(MockTranscriber::new("from superwhisper"));
+    let hex = Arc::new(MockTranscriber::new("from hex"));
+    let app = two_engines(&work, superwhisper.clone(), hex.clone());
+
+    let (status, body) = post(
+        app.clone(),
+        Some(TOKEN),
+        "/transcribe?engine=hex&lang=tr",
+        wav(1.0),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["text"], "from hex");
+    assert!(superwhisper.seen_languages().is_empty());
+    assert_eq!(hex.seen_languages(), vec!["tr".to_string()]);
+
+    let (status, body) = post(app, Some(TOKEN), "/transcribe?lang=tr", wav(1.0)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["text"], "from superwhisper");
+}
+
+#[tokio::test]
+async fn rejects_an_engine_that_is_not_configured() {
+    let work = TempDir::new().unwrap();
+    let app = two_engines(
+        &work,
+        Arc::new(MockTranscriber::new("x")),
+        Arc::new(MockTranscriber::new("y")),
+    );
+
+    let (status, body) = post(app, Some(TOKEN), "/transcribe?engine=whisper", wav(1.0)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["code"], "unknown_engine");
+}
+
+#[tokio::test]
+async fn the_default_engine_can_be_the_second_one() {
+    let work = TempDir::new().unwrap();
+    let hex = Arc::new(MockTranscriber::new("from hex"));
+    let app = router(
+        AppState::new(
+            Arc::new(MockTranscriber::new("from superwhisper")),
+            TOKEN,
+            Duration::from_secs(2),
+        )
+        .with_work_dir(work.path())
+        .with_engine(Engine::new("hex", "Hex", hex))
+        .with_default_engine("hex"),
+    );
+
+    let (status, body) = post(app, Some(TOKEN), "/transcribe?lang=tr", wav(1.0)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["text"], "from hex");
+}
+
+#[tokio::test]
+async fn a_single_engine_bridge_answers_any_engine_name() {
+    let work = TempDir::new().unwrap();
+    let mock = Arc::new(MockTranscriber::new("mocked"));
+    let app = router(state(mock, &work));
+
+    let (status, body) = post(app, Some(TOKEN), "/transcribe?engine=hex", wav(1.0)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["text"], "mocked");
 }

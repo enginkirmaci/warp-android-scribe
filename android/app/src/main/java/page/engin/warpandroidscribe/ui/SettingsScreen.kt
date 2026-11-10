@@ -63,12 +63,14 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.engin.warpandroidscribe.ConnectionMode
 import com.engin.warpandroidscribe.DictationTone
+import com.engin.warpandroidscribe.EngineCatalog
 import com.engin.warpandroidscribe.Replacement
 import com.engin.warpandroidscribe.SUPPORTED_LANGUAGES
 import com.engin.warpandroidscribe.ScribeClient
 import com.engin.warpandroidscribe.ScribePrefs
 import com.engin.warpandroidscribe.ServerSettings
 import com.engin.warpandroidscribe.TONES
+import com.engin.warpandroidscribe.TranscriptionEngine
 import com.engin.warpandroidscribe.Vocabulary
 import com.engin.warpandroidscribe.isSupportedLanguage
 import com.engin.warpandroidscribe.languageName
@@ -83,6 +85,7 @@ fun SettingsScreen() {
     var token by rememberSaveable { mutableStateOf(prefs.token) }
     var language by rememberSaveable { mutableStateOf(prefs.language) }
     var tone by rememberSaveable { mutableStateOf(prefs.tone) }
+    var engine by rememberSaveable { mutableStateOf(prefs.engine) }
     var shortcuts by rememberSaveable {
         mutableStateOf(prefs.shortcuts.joinToString(", "))
     }
@@ -93,6 +96,7 @@ fun SettingsScreen() {
     var languagePickerOpen by remember { mutableStateOf(false) }
     var languages by remember { mutableStateOf(SUPPORTED_LANGUAGES) }
     var server by remember { mutableStateOf<ServerSettings?>(null) }
+    var engineCatalog by remember { mutableStateOf<EngineCatalog?>(null) }
     var vocabulary by remember { mutableStateOf<Vocabulary?>(null) }
     var vocabularyDirty by remember { mutableStateOf(false) }
     var serverBusy by remember { mutableStateOf(false) }
@@ -170,6 +174,7 @@ fun SettingsScreen() {
                 token = token,
                 language = language,
                 tone = tone,
+                engine = engine,
                 shortcuts = shortcuts,
                 localUrl = localUrl,
                 remoteUrl = remoteUrl,
@@ -213,8 +218,26 @@ fun SettingsScreen() {
         }
     }
 
+    /** Which engines the bridge holds, and whether each one answers. */
+    fun refreshEngines() {
+        if (!prefs.isConfigured) return
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { ScribeClient(prefs).engines() }
+            }
+            result.onSuccess { engineCatalog = it }
+                .onFailure { engineCatalog = null }
+        }
+    }
+
     LaunchedEffect(Unit) {
-        refreshServer()
+        refreshEngines()
+    }
+
+    // The profile belongs to Superwhisper; with Hex selected there is nothing
+    // to read, and asking would only show an error for a setting Hex never sees.
+    LaunchedEffect(engine) {
+        if (engine == TranscriptionEngine.SUPERWHISPER) refreshServer()
     }
 
     LaunchedEffect(server?.processingTarget) {
@@ -248,7 +271,10 @@ fun SettingsScreen() {
             busy = false
             message = result
             if (result.startsWith("Server is running")) {
-                refreshServer(showMessage = true)
+                refreshEngines()
+                if (engine == TranscriptionEngine.SUPERWHISPER) {
+                    refreshServer(showMessage = true)
+                }
             }
         }
     }
@@ -382,6 +408,45 @@ fun SettingsScreen() {
                 }
             }
 
+            SettingsCard("ENGINE") {
+                Text(
+                    "Transcription engine",
+                    color = ScribeColors.Text,
+                    fontSize = ScribeText.Body,
+                    fontWeight = FontWeight.Medium,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TranscriptionEngine.entries.forEach { option ->
+                        FilterChip(
+                            selected = engine == option,
+                            onClick = { engine = option },
+                            label = { Text(option.label) },
+                        )
+                    }
+                }
+                val info = engineCatalog?.engines?.firstOrNull { it.id == engine.id }
+                Text(
+                    text = when {
+                        info == null -> "The server has not reported its engines yet."
+                        info.ready -> info.detail.ifBlank { "Ready on the server." }
+                        info.detail.isBlank() -> "This engine is not available on the server."
+                        else -> info.detail
+                    },
+                    color = if (info?.ready == false) ScribeColors.Error else ScribeColors.Muted,
+                    fontSize = ScribeText.Body,
+                )
+                Text(
+                    text = if (engine == TranscriptionEngine.HEX) {
+                        "Hex transcribes with Whisper large-v3-turbo on the server. " +
+                            "Tone, vocabulary and processing are Superwhisper settings and are not used."
+                    } else {
+                        "Superwhisper keeps its language, tone, vocabulary and processing profile on the server."
+                    },
+                    color = ScribeColors.Muted,
+                    fontSize = ScribeText.Body,
+                )
+            }
+
             SettingsCard("DICTATION") {
                 Text("Language", color = ScribeColors.Text, fontSize = ScribeText.Body, fontWeight = FontWeight.Medium)
                 OutlinedButton(
@@ -398,17 +463,19 @@ fun SettingsScreen() {
                     )
                     Text("▾", color = ScribeColors.Muted, fontSize = ScribeText.Label)
                 }
-                Text("Tone", color = ScribeColors.Text, fontSize = ScribeText.Body, fontWeight = FontWeight.Medium)
-                TonePicker(
-                    value = tone,
-                    options = toneChoices(server),
-                    onSelect = { tone = it },
-                )
-                Text(
-                    "Casual is lowercase, formal expands contractions. The cleanup model applies it.",
-                    color = ScribeColors.Muted,
-                    fontSize = ScribeText.Body,
-                )
+                if (engine == TranscriptionEngine.SUPERWHISPER) {
+                    Text("Tone", color = ScribeColors.Text, fontSize = ScribeText.Body, fontWeight = FontWeight.Medium)
+                    TonePicker(
+                        value = tone,
+                        options = toneChoices(server),
+                        onSelect = { tone = it },
+                    )
+                    Text(
+                        "Casual is lowercase, formal expands contractions. The cleanup model applies it.",
+                        color = ScribeColors.Muted,
+                        fontSize = ScribeText.Body,
+                    )
+                }
                 if (languagePickerOpen) {
                     LanguagePickerDialog(
                         selected = language,
@@ -437,98 +504,102 @@ fun SettingsScreen() {
                 )
             }
 
-            SettingsCard("VOCABULARY") {
-                VocabularyCard(
-                    vocabulary = vocabulary,
-                    busy = serverBusy,
-                    onAddTerm = { term ->
-                        vocabulary?.let { current ->
-                            vocabularyDirty = true
-                            vocabulary = current.copy(
-                                terms = (current.terms + term).distinct(),
-                            )
-                        }
-                    },
-                    onRemoveTerm = { term ->
-                        vocabulary?.let { current ->
-                            vocabularyDirty = true
-                            vocabulary = current.copy(terms = current.terms - term)
-                        }
-                    },
-                    onAddReplacement = { original, with ->
-                        vocabulary?.let { current ->
-                            vocabularyDirty = true
-                            vocabulary = current.copy(
-                                replacements = current.replacements
-                                    .filterNot { it.original == original } +
-                                    Replacement(original, with),
-                            )
-                        }
-                    },
-                    onRemoveReplacement = { original ->
-                        vocabulary?.let { current ->
-                            vocabularyDirty = true
-                            vocabulary = current.copy(
-                                replacements = current.replacements
-                                    .filterNot { it.original == original },
-                            )
-                        }
-                    },
-                    onSave = {
-                        vocabulary?.let { current ->
-                            scope.launch {
-                                serverBusy = true
-                                val result = withContext(Dispatchers.IO) {
-                                    runCatching { ScribeClient(prefs).saveVocabulary(current) }
-                                }
-                                result.onSuccess { snapshot ->
-                                    vocabularyDirty = false
-                                    applyServer(snapshot)
-                                    serverMessage = "Vocabulary saved."
-                                }.onFailure { error ->
-                                    serverMessage = "Vocabulary was not saved: ${error.message}"
-                                }
-                                serverBusy = false
+            // Superwhisper owns the profile; with Hex selected these cards
+            // would edit a server profile that never sees the request.
+            if (engine == TranscriptionEngine.SUPERWHISPER) {
+                SettingsCard("VOCABULARY") {
+                    VocabularyCard(
+                        vocabulary = vocabulary,
+                        busy = serverBusy,
+                        onAddTerm = { term ->
+                            vocabulary?.let { current ->
+                                vocabularyDirty = true
+                                vocabulary = current.copy(
+                                    terms = (current.terms + term).distinct(),
+                                )
                             }
-                        }
-                    },
-                )
-            }
+                        },
+                        onRemoveTerm = { term ->
+                            vocabulary?.let { current ->
+                                vocabularyDirty = true
+                                vocabulary = current.copy(terms = current.terms - term)
+                            }
+                        },
+                        onAddReplacement = { original, with ->
+                            vocabulary?.let { current ->
+                                vocabularyDirty = true
+                                vocabulary = current.copy(
+                                    replacements = current.replacements
+                                        .filterNot { it.original == original } +
+                                        Replacement(original, with),
+                                )
+                            }
+                        },
+                        onRemoveReplacement = { original ->
+                            vocabulary?.let { current ->
+                                vocabularyDirty = true
+                                vocabulary = current.copy(
+                                    replacements = current.replacements
+                                        .filterNot { it.original == original },
+                                )
+                            }
+                        },
+                        onSave = {
+                            vocabulary?.let { current ->
+                                scope.launch {
+                                    serverBusy = true
+                                    val result = withContext(Dispatchers.IO) {
+                                        runCatching { ScribeClient(prefs).saveVocabulary(current) }
+                                    }
+                                    result.onSuccess { snapshot ->
+                                        vocabularyDirty = false
+                                        applyServer(snapshot)
+                                        serverMessage = "Vocabulary saved."
+                                    }.onFailure { error ->
+                                        serverMessage = "Vocabulary was not saved: ${error.message}"
+                                    }
+                                    serverBusy = false
+                                }
+                            }
+                        },
+                    )
+                }
 
-            SettingsCard("PROCESSING") {
-                ProcessingCard(
-                    settings = server,
-                    busy = serverBusy,
-                    onSelect = { selected ->
-                        if (selected != server?.processing) {
+                SettingsCard("PROCESSING") {
+                    ProcessingCard(
+                        settings = server,
+                        busy = serverBusy,
+                        onSelect = { selected ->
+                            if (selected != server?.processing) {
+                                scope.launch {
+                                    serverBusy = true
+                                    val result = withContext(Dispatchers.IO) {
+                                        runCatching { ScribeClient(prefs).setProcessing(selected) }
+                                    }
+                                    result.onSuccess { snapshot ->
+                                        applyServer(snapshot)
+                                        serverMessage = "Processing set to ${snapshot.processing}."
+                                    }.onFailure { error ->
+                                        serverMessage = "Processing change failed: ${error.message}"
+                                    }
+                                    serverBusy = false
+                                }
+                            }
+                        },
+                        onCancel = {
                             scope.launch {
                                 serverBusy = true
                                 val result = withContext(Dispatchers.IO) {
-                                    runCatching { ScribeClient(prefs).setProcessing(selected) }
+                                    runCatching { ScribeClient(prefs).setProcessing("cloud") }
                                 }
-                                result.onSuccess { snapshot ->
-                                    applyServer(snapshot)
-                                    serverMessage = "Processing set to ${snapshot.processing}."
-                                }.onFailure { error ->
-                                    serverMessage = "Processing change failed: ${error.message}"
-                                }
+                                result.onSuccess { applyServer(it) }
+                                    .onFailure { serverMessage = "Cancel failed: ${it.message}" }
                                 serverBusy = false
                             }
-                        }
-                    },
-                    onCancel = {
-                        scope.launch {
-                            serverBusy = true
-                            val result = withContext(Dispatchers.IO) {
-                                runCatching { ScribeClient(prefs).setProcessing("cloud") }
-                            }
-                            result.onSuccess { applyServer(it) }
-                                .onFailure { serverMessage = "Cancel failed: ${it.message}" }
-                            serverBusy = false
-                        }
-                    },
-                    onRefresh = { refreshServer(showMessage = true) },
-                )
+                        },
+                        onRefresh = { refreshServer(showMessage = true) },
+                    )
+                }
             }
 
             SettingsCard("KEYBOARD") {

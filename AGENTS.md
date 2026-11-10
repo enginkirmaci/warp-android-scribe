@@ -18,11 +18,19 @@ Two halves, two toolchains:
 
 ## Bridge
 
-- Wire contract: `POST /transcribe?lang=…&tone=…` with raw `audio/wav` and
-  `Authorization: Bearer <token>`; `GET /health` for the phone's server test;
-  `GET /settings`, `PUT /settings/vocabulary` and `POST /settings/processing`
-  for the profile. Changing the status codes, the JSON field names or the
-  bearer scheme means the Android client changes in the same commit.
+- Wire contract: `POST /transcribe?engine=…&lang=…&tone=…` with raw `audio/wav`
+  and `Authorization: Bearer <token>`; `GET /health` for the phone's server test;
+  `GET /engines` for the engine picker; `GET /settings`,
+  `PUT /settings/vocabulary` and `POST /settings/processing` for the profile.
+  Changing the status codes, the JSON field names or the bearer scheme means the
+  Android client changes in the same commit.
+- Two engines share the bridge: Superwhisper (`superwhisper-cli`) and Hex
+  (`hex-cli`, `hex model transcribe` with `--model whisper_large_v3_turbo`).
+  The phone sends `?engine=`; `WARP_SCRIBE_TRANSCRIBER` only picks the default.
+  An unknown engine is a `400 unknown_engine`; a single-engine bridge (the mock)
+  answers every name with that engine. `/engines` reports `ready` and a `detail`
+  line per engine, and the Android Settings screen hides the Superwhisper-only
+  cards (tone, vocabulary, processing) when Hex is selected.
 - `SuperwhisperCli` serializes the whole set-language/transcribe/poll sequence
   with a tokio mutex: the daemon has one active session. Keep it that way.
 - The language pin is global in the Superwhisper profile; set it before every
@@ -57,19 +65,24 @@ Two halves, two toolchains:
   every `onWindowShown`; the full layout is a temporary switch, not a
   preference. The error line is the keyboard's first row; under it the
   clipboard bar, then the top bar. The clipboard bar never disappears with the
-  keys, so its button stays reachable while a panel is open. The top bar is the
-  keyboard icon (tap toggles full QWERTY, long-press opens Settings), the
-  **Dictate** pill and delete (hold repeats) to its right in both layouts; no
-  letter or symbol row carries a second backspace. The dictation language is
-  the pill's trailing segment, not a separate button: tapping it opens the
-  language panel, and for four seconds after a transcript it becomes `Undo`
-  (deleting the code points `handleTranscript` inserted). Under it,
+  keys, so its button stays reachable while a panel is open. In every layout the
+  top bar is the **Dictate** pill alone; Cancel joins it while a recording
+  runs. The keyboard icon (tap switches layouts, long-press opens Settings) sits
+  left of enter, and delete (hold repeats) ends the row above: the quick-insert
+  row in compact, the shift row in full, the last symbol row in symbols. No
+  letter or symbol row carries a second backspace. The dictation
+  language is the pill's leading segment, not a separate button: tapping it
+  opens the language panel, and for four seconds after a transcript it becomes
+  `Undo` (deleting the code points `handleTranscript` inserted). Under it,
   `ScribePrefs.shortcuts` renders the configurable slash commands (`/goal`,
-  `/compact` by default). The compact body is cursor arrows (hold repeats),
-  space, the emoji key and enter, then icon buttons for
-  `Undo`/`Cut`/`Copy`/`Paste`; no punctuation row, no fixed starter row, no
-  backspace beside the arrows, and vibration is intentionally off. The
-  clipboard bar (above the top bar) is the clipboard button at the far left,
+  `/compact` by default) in a row that scrolls sideways, with delete pinned at
+  its right end so a long command never pushes it off. Below that, one key row:
+  emoji, space, period, keyboard toggle, enter. The full QWERTY mirrors it with
+  `?123` and a comma added and puts delete at the end of the shift row; symbols
+  keep `ABC` instead of the period and put delete at the end of the last symbol
+  row. No cursor arrows, no undo/cut/copy/paste row, no punctuation row, no
+  fixed starter row, and vibration is intentionally off. The clipboard bar (above the top bar) is the clipboard button at the far
+  left,
   then the single horizontal strip of clips (`No clips yet` when empty). There
   is no Local/Remote chip and no bottom transcript strip; do not bring them
   back.
@@ -112,7 +125,7 @@ Two halves, two toolchains:
   over `displayLanguages()`. Do not put an editable search field in the IME
   panel: an IME-internal query would need the QWERTY routed to it instead of
   the app's `InputConnection`.
-- The emoji key left of Enter opens the emoji panel, the language panel's
+- The emoji key left of Space opens the emoji panel, the language panel's
   sibling. It opens with `MOST USED` — the emojis with the most taps, at most
   `MOST_USED_EMOJI_LIMIT` (20), ties broken by recency — then the full
   `res/raw/emoji.txt` catalogue: `group:` lines with one fully-qualified emoji
@@ -129,10 +142,20 @@ Two halves, two toolchains:
   Lite card that polls `GET /settings` while the bridge downloads models. The
   server's language list, vocabulary and processing status load from
   `GET /settings`; a failed load leaves the bundled list in place.
+- `ScribePrefs.engine` is `SUPERWHISPER` or `HEX` and the IME sends it as
+  `?engine=` on every request. Settings renders the picker from `GET /engines`
+  and hides the tone, vocabulary and processing cards while Hex is selected;
+  the keyboard never shows which engine is active, so the Settings screen is
+  the one place to change it.
 - The Enter key is editor-aware: `ui.sendKey` is set from the focused
   `EditorInfo` action, the key shows `↑` for `IME_ACTION_SEND`, and `enter()`
   calls `sendDefaultEditorAction(true)` only for a declared action. Plain and
   multiline fields keep the Enter key event.
+- The action keys a dictation leans on carry the raised pair (`KeyRaised`,
+  `KeyRaisedEdge`) instead of the flat key colour: space, Enter (green outline,
+  filled green when the editor declares a send action) and Delete (raised key,
+  error-coloured glyph). The Dictate pill stays the one gradient control; do
+  not give a letter key the accent.
 - Cleartext is limited to `<nas-lan>` in
   `res/xml/network_security_config.xml`. The public route is HTTPS and needs no
   exception.

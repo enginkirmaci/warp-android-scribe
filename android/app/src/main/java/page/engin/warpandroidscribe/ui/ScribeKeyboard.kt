@@ -157,7 +157,6 @@ fun ScribeKeyboard(state: ScribeUiState, actions: ScribeActions) {
 
 @Composable
 private fun TopBar(state: ScribeUiState, actions: ScribeActions) {
-    val keysEnabled = state.phase == Phase.IDLE || state.phase == Phase.ERROR
     Row(
         modifier = Modifier.fillMaxWidth().height(ScribeSize.Key),
         verticalAlignment = Alignment.CenterVertically,
@@ -176,37 +175,19 @@ private fun TopBar(state: ScribeUiState, actions: ScribeActions) {
                     modifier = Modifier.size(18.dp),
                 )
             }
-        } else {
-            LayoutButton(state.layout, actions.onToggleLayout, actions.onSettings)
         }
-        // The pill carries the dictation language in its own segment, so the
-        // bar is the layout switch, the pill and delete. The clipboard button
-        // and its history live in the row above.
+        // The pill owns this bar in every layout. The layout switch and delete
+        // sit with the keys: the switch left of enter, delete at the right end
+        // of the row above.
         DictatePill(state, actions, Modifier.weight(1f).fillMaxHeight())
-        // Delete is always the pill's right-hand neighbour, in both layouts.
-        RepeatKey(
-            modifier = Modifier
-                .width(ScribeSize.Key)
-                .fillMaxHeight()
-                .alpha(if (keysEnabled) 1f else DISABLED_ALPHA),
-            enabled = keysEnabled,
-            label = "Delete",
-            shape = ScribeShape.Pill,
-            onRepeat = actions.onBackspace,
-        ) {
-            Icon(
-                painter = painterResource(R.drawable.ic_backspace),
-                contentDescription = null,
-                tint = ScribeColors.Text,
-                modifier = Modifier.size(20.dp),
-            )
-        }
     }
 }
 
 @Composable
 private fun LayoutButton(
     layout: KeyboardMode,
+    enabled: Boolean = true,
+    shape: Shape = ScribeShape.Pill,
     onToggle: () -> Unit,
     onLongClick: () -> Unit,
 ) {
@@ -215,9 +196,10 @@ private fun LayoutButton(
         modifier = Modifier
             .width(ScribeSize.Key)
             .fillMaxHeight()
-            .clip(ScribeShape.Pill)
+            .clip(shape)
             .background(ScribeColors.Key)
             .combinedClickable(
+                enabled = enabled,
                 onClick = onToggle,
                 onLongClick = onLongClick,
             ),
@@ -278,6 +260,28 @@ private fun DictatePill(state: ScribeUiState, actions: ScribeActions, modifier: 
     ) {
         Box(
             modifier = Modifier
+                .widthIn(min = 52.dp)
+                .fillMaxHeight()
+                .alpha(if (idle) 1f else DISABLED_ALPHA)
+                .combinedClickable(enabled = idle, onClick = segmentAction)
+                .semantics {
+                    contentDescription = if (canUndo) "Undo insert" else "Dictation language"
+                }
+                .padding(horizontal = 10.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = segmentLabel,
+                color = onPill,
+                fontSize = ScribeText.Body,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+            )
+        }
+        Box(Modifier.width(1.dp).height(20.dp).background(onPill.copy(alpha = 0.16f)))
+
+        Box(
+            modifier = Modifier
                 .weight(1f)
                 .fillMaxHeight()
                 .then(
@@ -321,27 +325,6 @@ private fun DictatePill(state: ScribeUiState, actions: ScribeActions, modifier: 
                     maxLines = 1,
                 )
             }
-        }
-        Box(Modifier.width(1.dp).height(20.dp).background(onPill.copy(alpha = 0.16f)))
-        Box(
-            modifier = Modifier
-                .widthIn(min = 52.dp)
-                .fillMaxHeight()
-                .alpha(if (idle) 1f else DISABLED_ALPHA)
-                .combinedClickable(enabled = idle, onClick = segmentAction)
-                .semantics {
-                    contentDescription = if (canUndo) "Undo insert" else "Dictation language"
-                }
-                .padding(horizontal = 10.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = segmentLabel,
-                color = onPill,
-                fontSize = ScribeText.Body,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-            )
         }
     }
 }
@@ -419,13 +402,16 @@ private fun CompactBody(state: ScribeUiState, actions: ScribeActions) {
             .alpha(if (enabled) 1f else DISABLED_ALPHA),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        if (state.shortcuts.isNotEmpty()) {
+        // Quick inserts scroll; delete is pinned outside the scroll area so a
+        // long command never pushes it off the row.
+        Row(
+            Modifier.fillMaxWidth().height(ScribeSize.Chip),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
             Row(
-                Modifier
-                    .fillMaxWidth()
-                    .height(ScribeSize.Chip)
-                    .horizontalScroll(rememberScrollState()),
+                Modifier.weight(1f).fillMaxHeight().horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(5.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 for (shortcut in state.shortcuts) {
                     ShortcutChip(shortcut, enabled) {
@@ -435,42 +421,39 @@ private fun CompactBody(state: ScribeUiState, actions: ScribeActions) {
                     }
                 }
             }
+            RepeatKey(
+                modifier = Modifier.width(ScribeSize.Key).fillMaxHeight(),
+                enabled = enabled,
+                label = "Delete",
+                background = ScribeColors.KeyRaised,
+                border = ScribeColors.KeyRaisedEdge,
+                onRepeat = actions.onBackspace,
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_backspace),
+                    contentDescription = null,
+                    tint = ScribeColors.Error,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
         }
         Row(
             Modifier.fillMaxWidth().height(ScribeSize.Key),
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            RepeatKey(
-                modifier = Modifier.width(ScribeSize.Key).fillMaxHeight(),
-                enabled = enabled,
-                label = "Move cursor left",
-                onRepeat = { actions.onMoveCursor(-1) },
-            ) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_arrow_left),
-                    contentDescription = null,
-                    tint = ScribeColors.Text,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
-            RepeatKey(
-                modifier = Modifier.width(ScribeSize.Key).fillMaxHeight(),
-                enabled = enabled,
-                label = "Move cursor right",
-                onRepeat = { actions.onMoveCursor(1) },
-            ) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_arrow_right),
-                    contentDescription = null,
-                    tint = ScribeColors.Text,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
-            SpaceKey(Modifier.weight(1f).fillMaxHeight(), enabled) { actions.onText(" ") }
             EmojiKey(
                 modifier = Modifier.width(54.dp).fillMaxHeight(),
                 enabled = enabled,
                 onClick = actions.onToggleEmoji,
+            )
+            SpaceKey(Modifier.weight(1f).fillMaxHeight(), enabled) { actions.onText(" ") }
+            Key(".", Modifier.width(34.dp).fillMaxHeight(), enabled) { actions.onText(".") }
+            LayoutButton(
+                layout = state.layout,
+                enabled = enabled,
+                shape = ScribeShape.Chip,
+                onToggle = actions.onToggleLayout,
+                onLongClick = actions.onSettings,
             )
             EnterKey(
                 modifier = Modifier.width(54.dp).fillMaxHeight(),
@@ -479,48 +462,6 @@ private fun CompactBody(state: ScribeUiState, actions: ScribeActions) {
                 onClick = actions.onEnter,
             )
         }
-        Row(
-            Modifier.fillMaxWidth().height(ScribeSize.Key),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            EditorIcon(R.drawable.ic_undo, "Undo", enabled, Modifier.weight(1f)) {
-                actions.onUndo()
-            }
-            EditorIcon(R.drawable.ic_cut, "Cut", enabled, Modifier.weight(1f)) {
-                actions.onCut()
-            }
-            EditorIcon(R.drawable.ic_copy, "Copy", enabled, Modifier.weight(1f)) {
-                actions.onCopy()
-            }
-            EditorIcon(R.drawable.ic_paste, "Paste", enabled, Modifier.weight(1f)) {
-                actions.onPaste()
-            }
-        }
-    }
-}
-
-@Composable
-private fun EditorIcon(
-    icon: Int,
-    label: String,
-    enabled: Boolean,
-    modifier: Modifier,
-    onClick: () -> Unit,
-) {
-    Box(
-        modifier = modifier
-            .fillMaxHeight()
-            .clip(ScribeShape.Chip)
-            .background(ScribeColors.Key)
-            .combinedClickable(enabled = enabled, onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            painter = painterResource(icon),
-            contentDescription = label,
-            tint = ScribeColors.Text,
-            modifier = Modifier.size(20.dp),
-        )
     }
 }
 
@@ -799,13 +740,31 @@ private fun KeyboardBody(state: ScribeUiState, actions: ScribeActions) {
                         typeLetter(key)
                     }
                 }
+                RepeatKey(
+                    modifier = Modifier.width(44.dp).fillMaxHeight(),
+                    enabled = enabled,
+                    label = "Delete",
+                    background = ScribeColors.KeyRaised,
+                    border = ScribeColors.KeyRaisedEdge,
+                    onRepeat = actions.onBackspace,
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_backspace),
+                        contentDescription = null,
+                        tint = ScribeColors.Error,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
             }
             BottomRow(
+                layout = state.layout,
                 enabled = enabled,
                 onMode = { symbols = true },
                 onSpace = { actions.onText(" ") },
                 onEnter = actions.onEnter,
                 onEmoji = actions.onToggleEmoji,
+                onLayout = actions.onToggleLayout,
+                onSettings = actions.onSettings,
                 sendKey = state.sendKey,
                 onText = actions.onText,
             )
@@ -833,11 +792,14 @@ private fun LetterRow(
 
 @Composable
 private fun BottomRow(
+    layout: KeyboardMode,
     enabled: Boolean,
     onMode: () -> Unit,
     onSpace: () -> Unit,
     onEnter: () -> Unit,
     onEmoji: () -> Unit,
+    onLayout: () -> Unit,
+    onSettings: () -> Unit,
     sendKey: Boolean,
     onText: (String) -> Unit,
 ) {
@@ -853,15 +815,22 @@ private fun BottomRow(
             Text("?123", color = ScribeColors.Text, fontSize = ScribeText.Body)
         }
         Key(",", Modifier.width(34.dp).fillMaxHeight(), enabled) { onText(",") }
-        SpaceKey(Modifier.weight(1f).fillMaxHeight(), enabled) { onSpace() }
-        Key(".", Modifier.width(34.dp).fillMaxHeight(), enabled) { onText(".") }
         EmojiKey(
-            modifier = Modifier.width(54.dp).fillMaxHeight(),
+            modifier = Modifier.width(48.dp).fillMaxHeight(),
             enabled = enabled,
             onClick = onEmoji,
         )
+        SpaceKey(Modifier.weight(1f).fillMaxHeight(), enabled) { onSpace() }
+        Key(".", Modifier.width(34.dp).fillMaxHeight(), enabled) { onText(".") }
+        LayoutButton(
+            layout = layout,
+            enabled = enabled,
+            shape = ScribeShape.Chip,
+            onToggle = onLayout,
+            onLongClick = onSettings,
+        )
         EnterKey(
-            modifier = Modifier.width(54.dp).fillMaxHeight(),
+            modifier = Modifier.width(48.dp).fillMaxHeight(),
             enabled = enabled,
             send = sendKey,
             onClick = onEnter,
@@ -881,7 +850,7 @@ private fun SymbolRows(
         listOf("-", "_", "=", "+", "[", "]", "{", "}", ";", ":"),
         listOf("'", "\"", "\\", "|", ",", ".", "/", "?", "<", ">"),
     )
-    for (row in rows) {
+    rows.forEachIndexed { index, row ->
         Row(
             Modifier.fillMaxWidth().height(ScribeSize.Key),
             horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -889,6 +858,23 @@ private fun SymbolRows(
             for (key in row) {
                 Key(key, Modifier.weight(1f).fillMaxHeight(), enabled) {
                     actions.onText(key)
+                }
+            }
+            if (index == rows.lastIndex) {
+                RepeatKey(
+                    modifier = Modifier.width(44.dp).fillMaxHeight(),
+                    enabled = enabled,
+                    label = "Delete",
+                    background = ScribeColors.KeyRaised,
+                    border = ScribeColors.KeyRaisedEdge,
+                    onRepeat = actions.onBackspace,
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_backspace),
+                        contentDescription = null,
+                        tint = ScribeColors.Error,
+                        modifier = Modifier.size(20.dp),
+                    )
                 }
             }
         }
@@ -905,6 +891,13 @@ private fun SymbolRows(
             Text("ABC", color = ScribeColors.Text, fontSize = ScribeText.Body)
         }
         SpaceKey(Modifier.weight(1f).fillMaxHeight(), enabled) { actions.onText(" ") }
+        LayoutButton(
+            layout = KeyboardMode.FULL,
+            enabled = enabled,
+            shape = ScribeShape.Chip,
+            onToggle = actions.onToggleLayout,
+            onLongClick = actions.onSettings,
+        )
         EnterKey(
             modifier = Modifier.width(54.dp).fillMaxHeight(),
             enabled = enabled,
@@ -1613,13 +1606,16 @@ private fun RepeatKey(
     enabled: Boolean = true,
     label: String,
     shape: Shape = ScribeShape.Chip,
+    background: Color = ScribeColors.Key,
+    border: Color? = null,
     onRepeat: () -> Unit,
     content: @Composable BoxScope.() -> Unit,
 ) {
     Box(
         modifier = modifier
             .clip(shape)
-            .background(ScribeColors.Key)
+            .background(background)
+            .then(if (border == null) Modifier else Modifier.border(1.dp, border, shape))
             .semantics {
                 onClick(label = label) {
                     if (enabled) {
@@ -1683,6 +1679,8 @@ private fun SpaceKey(
     KeyBox(
         modifier = modifier.semantics { contentDescription = "Space" },
         enabled = enabled,
+        background = ScribeColors.KeyRaised,
+        border = ScribeColors.KeyRaisedEdge,
         onClick = onClick,
     ) {}
 }
@@ -1718,12 +1716,13 @@ private fun EnterKey(
     KeyBox(
         modifier = modifier,
         enabled = enabled,
-        background = if (send) ScribeColors.Green else ScribeColors.Key,
+        background = if (send) ScribeColors.Green else ScribeColors.KeyRaised,
+        border = if (send) null else ScribeColors.Green.copy(alpha = 0.5f),
         onClick = onClick,
     ) {
         Text(
             text = if (send) "↑" else "↵",
-            color = if (send) ScribeColors.Background else ScribeColors.Text,
+            color = if (send) ScribeColors.Background else ScribeColors.Green,
             fontSize = ScribeText.Key,
         )
     }
@@ -1735,6 +1734,7 @@ private fun KeyBox(
     enabled: Boolean = true,
     shape: Shape = ScribeShape.Chip,
     background: Color = ScribeColors.Key,
+    border: Color? = null,
     onClick: () -> Unit,
     content: @Composable BoxScope.() -> Unit,
 ) {
@@ -1742,6 +1742,7 @@ private fun KeyBox(
         modifier = modifier
             .clip(shape)
             .background(background)
+            .then(if (border == null) Modifier else Modifier.border(1.dp, border, shape))
             .combinedClickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
         content = content,

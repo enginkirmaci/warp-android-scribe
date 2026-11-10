@@ -30,9 +30,43 @@ use crate::{
 
 const SERVICE: &str = "warp-android-scribe-bridge";
 
+/// One transcription backend the bridge can route a request to. The phone picks
+/// it per request with `?engine=`; the default comes from the environment.
+#[derive(Clone)]
+pub struct Engine {
+    pub id: String,
+    pub label: String,
+    pub transcriber: Arc<dyn Transcriber>,
+    pub ready: bool,
+    pub detail: String,
+}
+
+impl Engine {
+    pub fn new(
+        id: impl Into<String>,
+        label: impl Into<String>,
+        transcriber: Arc<dyn Transcriber>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            transcriber,
+            ready: true,
+            detail: String::new(),
+        }
+    }
+
+    pub fn with_status(mut self, ready: bool, detail: impl Into<String>) -> Self {
+        self.ready = ready;
+        self.detail = detail.into();
+        self
+    }
+}
+
 #[derive(Clone)]
 pub struct AppState {
-    pub transcriber: Arc<dyn Transcriber>,
+    engines: Arc<Vec<Engine>>,
+    default_engine: String,
     token: Arc<str>,
     timeout: Duration,
     max_audio_bytes: usize,
@@ -49,8 +83,10 @@ impl AppState {
         token: impl Into<Arc<str>>,
         timeout: Duration,
     ) -> Self {
+        let (id, label) = engine_names(transcriber.name());
         Self {
-            transcriber,
+            engines: Arc::new(vec![Engine::new(id.clone(), label, transcriber)]),
+            default_engine: id,
             token: token.into(),
             timeout,
             max_audio_bytes: config::DEFAULT_MAX_AUDIO_BYTES,
@@ -63,6 +99,21 @@ impl AppState {
                 Duration::from_secs(15),
             )),
         }
+    }
+
+    /// Adds a second backend, or replaces the one with the same id.
+    pub fn with_engine(mut self, engine: Engine) -> Self {
+        let engines = Arc::make_mut(&mut self.engines);
+        match engines.iter_mut().find(|existing| existing.id == engine.id) {
+            Some(existing) => *existing = engine,
+            None => engines.push(engine),
+        }
+        self
+    }
+
+    pub fn with_default_engine(mut self, id: impl Into<String>) -> Self {
+        self.default_engine = id.into();
+        self
     }
 
     pub fn with_limits(mut self, max_audio_bytes: usize, max_audio_secs: f64) -> Self {
@@ -92,12 +143,55 @@ impl AppState {
         self.settings = settings;
         self
     }
+
+    pub fn default_engine(&self) -> &str {
+        &self.default_engine
+    }
+
+    /// The engine a request asked for, or the configured default. An unknown id
+    /// is a client error, not a fallback: silently using the other engine would
+    /// hide a typo in the phone's setting.
+    fn select_engine(&self, requested: Option<&str>) -> Result<&Engine, ApiError> {
+        let id = requested
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .unwrap_or(&self.default_engine);
+        if let Some(engine) = self.engines.iter().find(|engine| engine.id == id) {
+            return Ok(engine);
+        }
+        // A mock bridge has one engine and stands in for every name, which is
+        // how the Android side is developed without a daemon.
+        if let [only] = self.engines.as_slice() {
+            return Ok(only);
+        }
+        let available = self
+            .engines
+            .iter()
+            .map(|engine| engine.id.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        Err(fail(
+            StatusCode::BAD_REQUEST,
+            "unknown_engine",
+            format!("engine {id:?} is not configured; use one of {available}"),
+        ))
+    }
+}
+
+fn engine_names(name: &str) -> (String, String) {
+    match name {
+        "superwhisper-cli" => ("superwhisper".to_string(), "Superwhisper".to_string()),
+        "hex-cli" => ("hex".to_string(), "Hex".to_string()),
+        "mock" => ("mock".to_string(), "Mock".to_string()),
+        other => (other.to_string(), other.to_string()),
+    }
 }
 
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/transcribe", post(transcribe))
+        .route("/engines", get(engines))
         .route("/settings", get(get_settings))
         .route("/settings/vocabulary", put(put_vocabulary))
         .route("/settings/processing", post(put_processing))
@@ -111,7 +205,9 @@ struct Health {
     ok: bool,
     service: &'static str,
     version: &'static str,
-    transcriber: &'static str,
+    transcriber: String,
+    default_engine: String,
+    engines: Vec<String>,
     default_language: String,
     uptime_secs: u64,
 }
@@ -121,9 +217,45 @@ async fn health(State(state): State<AppState>) -> Json<Health> {
         ok: true,
         service: SERVICE,
         version: env!("CARGO_PKG_VERSION"),
-        transcriber: state.transcriber.name(),
+        transcriber: state.default_engine.clone(),
+        default_engine: state.default_engine.clone(),
+        engines: state
+            .engines
+            .iter()
+            .map(|engine| engine.id.clone())
+            .collect(),
         default_language: state.default_language.clone(),
         uptime_secs: state.started.elapsed().as_secs(),
+    })
+}
+
+#[derive(Debug, Serialize)]
+struct EngineList {
+    default: String,
+    engines: Vec<EngineView>,
+}
+
+#[derive(Debug, Serialize)]
+struct EngineView {
+    id: String,
+    label: String,
+    ready: bool,
+    detail: String,
+}
+
+async fn engines(State(state): State<AppState>) -> Json<EngineList> {
+    Json(EngineList {
+        default: state.default_engine.clone(),
+        engines: state
+            .engines
+            .iter()
+            .map(|engine| EngineView {
+                id: engine.id.clone(),
+                label: engine.label.clone(),
+                ready: engine.ready,
+                detail: engine.detail.clone(),
+            })
+            .collect(),
     })
 }
 
@@ -133,6 +265,8 @@ struct TranscribeQuery {
     lang: Option<String>,
     #[serde(default)]
     tone: Option<String>,
+    #[serde(default)]
+    engine: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -166,6 +300,7 @@ async fn transcribe(
 ) -> Result<Json<TranscribeResponse>, ApiError> {
     reject_unsupported_content_type(&headers)?;
     reject_oversized_declaration(&headers, state.max_audio_bytes)?;
+    let engine = state.select_engine(query.engine.as_deref())?;
 
     let bytes = to_bytes(body, state.max_audio_bytes).await.map_err(|_| {
         fail(
@@ -242,6 +377,7 @@ async fn transcribe(
     tracing::info!(
         bytes = bytes.len(),
         audio_secs = wav.duration_secs,
+        engine = %engine.id,
         language = %language,
         tone = tone.as_deref().unwrap_or("profile"),
         "transcribing"
@@ -253,7 +389,7 @@ async fn transcribe(
     };
     let outcome = tokio::time::timeout(
         state.timeout,
-        state.transcriber.transcribe(temp.path(), &request),
+        engine.transcriber.transcribe(temp.path(), &request),
     )
     .await;
 
@@ -274,6 +410,7 @@ async fn transcribe(
 
     let duration = response_duration(&transcript, &wav);
     tracing::info!(
+        engine = %engine.id,
         chars = transcript.text.chars().count(),
         duration_secs = duration,
         "transcribed"
@@ -416,19 +553,19 @@ fn transcriber_error(error: TranscriberError) -> ApiError {
             "transcription timed out",
         ),
         TranscriberError::Rejected(message) => {
-            tracing::warn!(%message, "superwhisper rejected the transcription");
+            tracing::warn!(%message, "the transcription engine rejected the request");
             fail(StatusCode::BAD_GATEWAY, "transcriber_rejected", message)
         }
         TranscriberError::Cli(message) => {
-            tracing::warn!(%message, "superwhisper CLI failed");
+            tracing::warn!(%message, "the transcription CLI failed");
             fail(StatusCode::BAD_GATEWAY, "transcriber_failed", message)
         }
         TranscriberError::Protocol(message) => {
-            tracing::warn!(%message, "superwhisper returned an invalid response");
+            tracing::warn!(%message, "the transcription engine returned an invalid response");
             fail(StatusCode::BAD_GATEWAY, "transcriber_protocol", message)
         }
         TranscriberError::Io(io_error) => {
-            tracing::warn!(%io_error, "superwhisper I/O failed");
+            tracing::warn!(%io_error, "the transcription engine failed");
             fail(
                 StatusCode::BAD_GATEWAY,
                 "transcriber_io",

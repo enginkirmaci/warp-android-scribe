@@ -56,6 +56,16 @@ class ScribePrefs(context: Context) {
                 .apply()
         }
 
+    /**
+     * Superwhisper or Hex. The bridge holds both engines and picks one per
+     * request, so switching does not need a server restart.
+     */
+    var engine: TranscriptionEngine
+        get() = TranscriptionEngine.fromId(prefs.getString(KEY_ENGINE, null))
+        set(value) {
+            prefs.edit().putString(KEY_ENGINE, value.id).apply()
+        }
+
     var localUrl: String
         get() = prefs.getString(KEY_LOCAL_URL, null) ?: DEFAULT_LOCAL_URL
         set(value) {
@@ -98,6 +108,7 @@ class ScribePrefs(context: Context) {
         token: String,
         language: String,
         tone: String,
+        engine: TranscriptionEngine,
         shortcuts: String,
         localUrl: String,
         remoteUrl: String,
@@ -106,6 +117,7 @@ class ScribePrefs(context: Context) {
         .putString(KEY_TOKEN, token.trim())
         .putString(KEY_LANGUAGE, if (isSupportedLanguage(language)) language else DEFAULT_LANGUAGE)
         .putString(KEY_TONE, if (isSupportedTone(tone)) tone else DEFAULT_TONE)
+        .putString(KEY_ENGINE, engine.id)
         .putString(KEY_SHORTCUTS, shortcuts.trim())
         .putString(KEY_LOCAL_URL, localUrl.trim().trimEnd('/'))
         .putString(KEY_REMOTE_URL, remoteUrl.trim().trimEnd('/'))
@@ -190,6 +202,7 @@ class ScribePrefs(context: Context) {
         private const val KEY_TOKEN = "token"
         private const val KEY_LANGUAGE = "language"
         private const val KEY_TONE = "tone"
+        private const val KEY_ENGINE = "engine"
         private const val KEY_TLS_LEGACY = "tls"
         private const val KEY_RECENT = "recent_transcripts"
         private const val KEY_SHORTCUTS = "shortcuts"
