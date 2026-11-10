@@ -242,6 +242,7 @@ class ScribeImeService : InputMethodService() {
         ui.language = prefs.language
         ui.sendKey = info?.imeOptions?.and(EditorInfo.IME_MASK_ACTION) ==
             EditorInfo.IME_ACTION_SEND
+        ui.numberPad = numberPadFor(info)
         ui.shortcuts = prefs.shortcuts
         ui.clipboard = buildClipboard()
         ui.clipboardView = ClipboardView.HIDDEN
@@ -257,6 +258,14 @@ class ScribeImeService : InputMethodService() {
         registerClipboard()
         refreshClipboard()
     }
+
+    /** A numeric or phone editor types digits, so its key area is a number pad. */
+    private fun numberPadFor(info: EditorInfo?): NumberPad =
+        when (info?.inputType?.and(EditorInfo.TYPE_MASK_CLASS)) {
+            EditorInfo.TYPE_CLASS_NUMBER -> NumberPad.DECIMAL
+            EditorInfo.TYPE_CLASS_PHONE -> NumberPad.PHONE
+            else -> NumberPad.NONE
+        }
 
     override fun onFinishInputView(finishingInput: Boolean) {
         super.onFinishInputView(finishingInput)

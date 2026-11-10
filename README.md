@@ -1,7 +1,7 @@
 # warp-android-scribe
 
 A dictation-first Android keyboard with a full English QWERTY layout. Hold (or
-tap) the green key in the top bar, speak, and the transcript is committed into
+tap) the big key in the top bar, speak, and the transcript is committed into
 the focused field. Audio goes to a small bridge on <nas-name>, which hands it to
 one of two engines, chosen per request from the phone's Settings: Superwhisper
 through its `superwhisper` CLI, or Hex through `hex model transcribe` with
@@ -287,37 +287,53 @@ selected, and `SETUP` otherwise.
 
 - The keyboard opens in a compact dictation/prompt layout. The error line is
   the first row, so no panel can hide it; under it the clipboard bar, then the
-  top bar. In every layout the top bar is the green **Dictate** pill alone,
-  with its leading language segment (`TR`, `EN-GB`, `AUTO`, …); Cancel joins it
-  while a recording runs. The keyboard icon sits left of enter, and delete ends
-  the row above: the quick-insert row in compact, the shift row in full, the
-  last symbol row in symbols. The keyboard icon switches layouts; long-press
-  opens Settings. Tapping the language segment opens the in-keyboard language
-  panel, using the same list as Settings.
-- After a transcript lands the pill reads **Inserted** for four seconds and the
-  segment becomes **Undo**, which deletes exactly the code points that
+  top bar. In every layout the top bar is the **Dictate** pill, filled with the
+  phone's own wallpaper accent (the colour picked under Wallpaper and style;
+  the app's green when the platform has none), with its leading language
+  segment (`TR`, `EN-GB`, `AUTO`, …), and the bar's far right holds the one
+  transient action of a dictation: **Cancel** while a recording or a
+  transcription runs. The keyboard icon sits left of enter, and delete
+  ends the row above: the quick-insert row in compact, the shift row in full,
+  the last symbol row in symbols. The keyboard icon switches layouts;
+  long-press opens Settings. Tapping the language segment opens the in-keyboard
+  language panel, using the same list as Settings.
+- After a transcript lands the pill reads **Inserted** for four seconds and
+  **Undo** appears in that far-right slot, deleting exactly the code points
   dictation inserted. The confirmation costs no extra row.
 - Under the top bar, the app-configured shortcut row shows slash commands
   (`/goal`, `/compact` by default). Tapping inserts the command plus a space;
-  edit the comma-separated list in Settings. The row scrolls sideways, and
-  delete stays pinned at its right edge however long the commands are.
+  edit the comma-separated list in Settings. The row is a full key row, the same
+  height as every other row, and it scrolls sideways, with delete pinned at its
+  right edge however long the commands are.
 - The clipboard bar above the top bar: the clipboard button at the left, then a
   single horizontal row of clip boxes; tap one to insert it. The bar stays
   while a panel is open, so the button never moves.
 - The compact body is the shortcut row plus one key row, left to right: the
-  emoji key, the unlabelled space bar, a period key, the keyboard toggle and
-  enter. Delete lives at the right end of the shortcut row (hold to repeat).
-  There are no cursor arrows and no editor row (undo/cut/copy/paste) under the
-  keys. Vibration is off.
+  emoji key, a comma, the unlabelled space bar, a period, the keyboard toggle
+  and enter. Delete lives at the right end of the shortcut row (hold to
+  repeat). There are no cursor arrows and no editor row (undo/cut/copy/paste)
+  under the keys. Vibration is off.
 - The full English QWERTY follows the same rules: number row, `qwertyuiop`,
   `asdfghjkl`, then shift and `zxcvbnm` with delete at that row's right end,
-  and a bottom row of `?123`, comma, emoji, space, period, the keyboard toggle
-  and enter. The symbols view (`?123`) keeps its three symbol rows, with delete
-  at the end of the last one, and an `ABC`/space/toggle/enter bottom row. The
-  compact layout is the default on every keyboard show; the full switch is
+  and a bottom row of the symbols key (a `=\<` mark), emoji, comma, space,
+  period, the keyboard toggle and enter. The symbols view keeps its three
+  symbol rows, with delete at the end of the last one, and an
+  `ABC`/comma/space/period/toggle/enter bottom row. Every key row keeps the
+  comma directly left of the space bar and the period directly right of it.
+  The compact layout is the default on every keyboard show; the full switch is
   temporary.
   Shift applies to one letter; a second tap within 300 ms locks it, and the
   locked key shows a small bar under the arrow.
+- A numeric or phone field gets a number pad instead of the letters: four rows
+  of digits with `,`/`.` (a number field) or `+`/`#` (a phone field) beside
+  zero, and delete plus a half-height enter down a wider right rail. The
+  clipboard bar and the Dictate pill stay, so a dictation and a pasted clip are
+  still one tap away.
+- Every key is one flat fill: no key is outlined and no key sits on a raised
+  tone. The phone's accent marks what is switched on — shift while it is on,
+  the clipboard button while its panel is open, the picked clip card, the
+  clipboard filters and the selected language — and the Dictate pill and Enter
+  key carry it as their own colour.
 - The Enter key follows the focused editor: when it declares a send action the
   key shows `↑` and performs that action, so Enter sends in a chat composer;
   plain and multiline fields still get a newline. The system's own app actions
@@ -333,7 +349,7 @@ selected, and `SETUP` otherwise.
   `InputConnection.commitContent`. The expand icon opens the full clipboard view
   with `ALL`/`TEXT`/`IMAGES`/`DICTATION` filters, relative timestamps,
   long-press actions (`Insert`, `Copy`, `Delete`) and a two-tap `Clear all`
-  (clips only; transcripts stay). The picked card keeps a green outline while
+  (clips only; transcripts stay). The picked card keeps an accent outline while
   the rest dim, and an empty filter says which kind is missing. Search is not
   implemented yet. The panel has no "System keyboard" action; the picker lives
   in Settings.
@@ -381,11 +397,11 @@ denied or the phone is away from the LAN. The bridge port is `8787` because
   panel.
 - Layout: compact dictation/prompt surface by default; the keyboard icon in
   the key row opens the full English QWERTY and returns. The compact top bar is
-  the Dictate pill alone, its language segment on the left; the row under it is
-  the scrolling quick inserts with delete pinned right, then emoji, space,
-  period, keyboard toggle and enter. Quick inserts come from Settings. No mode chip, no
-  cursor arrows, no fixed starter row, vibration off, no bottom transcript
-  strip.
+  the Dictate pill, its language segment on the left and Cancel or Undo at the
+  far right; the row under it is the scrolling quick inserts with delete pinned
+  right, then emoji, space, period, keyboard toggle and enter. Quick inserts
+  come from Settings. No mode chip, no cursor arrows, no fixed starter row,
+  vibration off, no bottom transcript strip.
 - Connection: one token, two modes with editable URLs. The initial Local URL is
   `http://<nas-lan>:8787`, the initial Remote URL is
   `https://<nas-host>`; both are stored in Settings. The keyboard

@@ -28,6 +28,9 @@ enum class ClipKind { TEXT, IMAGE, TRANSCRIPT }
 
 enum class KeyboardMode { COMPACT, FULL }
 
+/** The number pad a focused editor asks for; `NONE` keeps the letter keyboards. */
+enum class NumberPad { NONE, DECIMAL, PHONE }
+
 enum class ClipboardView { HIDDEN, QUICK, FULL }
 
 data class ClipboardEntry(
@@ -48,6 +51,8 @@ class ScribeUiState {
     var language by mutableStateOf("tr")
     /** True when the focused editor asks for a send action, so Enter shows ↑. */
     var sendKey by mutableStateOf(false)
+    /** Digits-only editors get the number pad instead of the letter keys. */
+    var numberPad by mutableStateOf(NumberPad.NONE)
     var layout by mutableStateOf(KeyboardMode.COMPACT)
     var error by mutableStateOf<String?>(null)
     var canRetry by mutableStateOf(false)

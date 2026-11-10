@@ -66,21 +66,28 @@ Two halves, two toolchains:
   preference. The error line is the keyboard's first row; under it the
   clipboard bar, then the top bar. The clipboard bar never disappears with the
   keys, so its button stays reachable while a panel is open. In every layout the
-  top bar is the **Dictate** pill alone; Cancel joins it while a recording
-  runs. The keyboard icon (tap switches layouts, long-press opens Settings) sits
-  left of enter, and delete (hold repeats) ends the row above: the quick-insert
-  row in compact, the shift row in full, the last symbol row in symbols. No
-  letter or symbol row carries a second backspace. The dictation
-  language is the pill's leading segment, not a separate button: tapping it
-  opens the language panel, and for four seconds after a transcript it becomes
-  `Undo` (deleting the code points `handleTranscript` inserted). Under it,
+  top bar is the **Dictate** pill, and its far right belongs to the one
+  transient action of a dictation: `Cancel` while a recording or transcription
+  runs, then `Undo` for four seconds after a transcript (deleting the code
+  points `handleTranscript` inserted). The keyboard icon (tap switches layouts,
+  long-press opens Settings) sits left of enter, and delete (hold repeats) ends
+  the row above: the quick-insert row in compact, the shift row in full, the
+  last symbol row in symbols. No letter or symbol row carries a second
+  backspace. The dictation language is the pill's leading segment, not a
+  separate button: tapping it opens the language panel. Under it,
   `ScribePrefs.shortcuts` renders the configurable slash commands (`/goal`,
-  `/compact` by default) in a row that scrolls sideways, with delete pinned at
-  its right end so a long command never pushes it off. Below that, one key row:
-  emoji, space, period, keyboard toggle, enter. The full QWERTY mirrors it with
-  `?123` and a comma added and puts delete at the end of the shift row; symbols
-  keep `ABC` instead of the period and put delete at the end of the last symbol
-  row. No cursor arrows, no undo/cut/copy/paste row, no punctuation row, no
+  `/compact` by default) in a row at the same key height as every other row,
+  scrolling sideways, with delete pinned at its right end so a long command
+  never pushes it off. Below that, one key row: emoji, comma, space, period,
+  keyboard toggle, enter. Every layout keeps the comma directly left of space
+  and the period directly right of it: the full QWERTY swaps `?123` in for the
+  emoji slot with the symbols key (`ic_symbols`, a `=\<` mark) and puts delete
+  at the end of the shift row, symbols swap `ABC` in and put delete at the end
+  of the last symbol row. A numeric or phone editor
+  (`TYPE_CLASS_NUMBER` / `TYPE_CLASS_PHONE`) replaces the key area with a number
+  pad: four rows of digits, `,`/`.` on a number field and `+`/`#` on a phone
+  field, with delete and a half-height enter down a wider (64 dp) right rail;
+  the clipboard bar and the pill stay. No cursor arrows, no undo/cut/copy/paste row, no punctuation row, no
   fixed starter row, and vibration is intentionally off. The clipboard bar (above the top bar) is the clipboard button at the far
   left,
   then the single horizontal strip of clips (`No clips yet` when empty). There
@@ -96,7 +103,7 @@ Two halves, two toolchains:
   reject content; show the error and keep the panel state sane.
 - The quick grid expands to `ClipboardView.FULL`: `ALL`/`TEXT`/`IMAGES`/`DICTATION`
   filters, relative timestamps, long-press `Insert`/`Copy`/`Delete` (the picked
-  card keeps a green outline and the rest dim; Delete is the error colour), and
+  card keeps an accent outline and the rest dim; Delete is the error colour), and
   a two-tap `Clear all` that removes clips but keeps `RECENT` transcripts.
   Cards are labelled `TEXT`, `IMAGE` or `DICTATION` from `clipKindLabel`; the
   panel has no "System keyboard" action (Settings owns the picker) and an empty
@@ -151,11 +158,16 @@ Two halves, two toolchains:
   `EditorInfo` action, the key shows `↑` for `IME_ACTION_SEND`, and `enter()`
   calls `sendDefaultEditorAction(true)` only for a declared action. Plain and
   multiline fields keep the Enter key event.
-- The action keys a dictation leans on carry the raised pair (`KeyRaised`,
-  `KeyRaisedEdge`) instead of the flat key colour: space, Enter (green outline,
-  filled green when the editor declares a send action) and Delete (raised key,
-  error-coloured glyph). The Dictate pill stays the one gradient control; do
-  not give a letter key the accent.
+- Every key is one flat fill (`ScribeColors.Key`); no key is outlined and none
+  sits on a raised tone. The phone's own wallpaper accent —
+  `theme_customization_overlay_packages.accent_color`, then
+  `system_accent1_500`, then the app green — is what a dictation hands off to
+  and what is switched on: the Dictate pill (one flat fill, never a gradient),
+  the Enter key (accent glyph, filled accent when the editor declares a send
+  action), shift while it is on, the clipboard button while its panel is open,
+  the picked clip card's outline, the clipboard filters and the selected
+  language. Delete's glyph is text-coloured, not the error colour. Do not give
+  a letter key the accent.
 - Cleartext is limited to `<nas-lan>` in
   `res/xml/network_security_config.xml`. The public route is HTTPS and needs no
   exception.

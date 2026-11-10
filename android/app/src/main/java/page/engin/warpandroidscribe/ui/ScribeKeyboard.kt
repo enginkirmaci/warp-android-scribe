@@ -88,6 +88,7 @@ import com.engin.warpandroidscribe.EmojiGroup
 import com.engin.warpandroidscribe.EmojiUse
 import com.engin.warpandroidscribe.KeyboardMode
 import com.engin.warpandroidscribe.MOST_USED_EMOJI_LIMIT
+import com.engin.warpandroidscribe.NumberPad
 import com.engin.warpandroidscribe.Phase
 import com.engin.warpandroidscribe.R
 import com.engin.warpandroidscribe.ScribeActions
@@ -143,13 +144,9 @@ fun ScribeKeyboard(state: ScribeUiState, actions: ScribeActions) {
                     onClose = actions.onToggleEmoji,
                 )
                 state.clipboardView == ClipboardView.QUICK -> ClipboardPanel(state, actions)
-                else -> {
-                    if (state.layout == KeyboardMode.COMPACT) {
-                        CompactBody(state, actions)
-                    } else {
-                        KeyboardBody(state, actions)
-                    }
-                }
+                state.numberPad != NumberPad.NONE -> NumberPadBody(state, actions)
+                state.layout == KeyboardMode.COMPACT -> CompactBody(state, actions)
+                else -> KeyboardBody(state, actions)
             }
         }
     }
@@ -157,29 +154,63 @@ fun ScribeKeyboard(state: ScribeUiState, actions: ScribeActions) {
 
 @Composable
 private fun TopBar(state: ScribeUiState, actions: ScribeActions) {
+    val busy = state.phase == Phase.RECORDING || state.phase == Phase.TRANSCRIBING
+    val canUndo = !busy && state.notice != null && state.noticeUndoCodePoints > 0
     Row(
         modifier = Modifier.fillMaxWidth().height(ScribeSize.Key),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {
-        if (state.phase == Phase.RECORDING || state.phase == Phase.TRANSCRIBING) {
-            KeyBox(
-                modifier = Modifier.width(ScribeSize.Key).fillMaxHeight(),
-                shape = ScribeShape.Pill,
-                onClick = actions.onCancel,
-            ) {
-                Icon(
-                    painter = painterResource(R.drawable.ic_close),
-                    contentDescription = "Cancel",
-                    tint = ScribeColors.Error,
-                    modifier = Modifier.size(18.dp),
-                )
-            }
-        }
         // The pill owns this bar in every layout. The layout switch and delete
         // sit with the keys: the switch left of enter, delete at the right end
         // of the row above.
         DictatePill(state, actions, Modifier.weight(1f).fillMaxHeight())
+        // The one transient action of a dictation rides at the far right, so
+        // the pill never starts from a different edge: Cancel while a dictation
+        // runs, Undo while the fresh transcript can still be taken back.
+        when {
+            busy -> CancelKey(actions.onCancel)
+            canUndo -> UndoKey(actions.onUndoInsert)
+        }
+    }
+}
+
+/** The escape hatch of a running dictation, at the far right of the top bar. */
+@Composable
+private fun CancelKey(onCancel: () -> Unit) {
+    KeyBox(
+        modifier = Modifier.width(ScribeSize.Key).fillMaxHeight(),
+        shape = ScribeShape.Pill,
+        onClick = onCancel,
+    ) {
+        Icon(
+            painter = painterResource(R.drawable.ic_close),
+            contentDescription = "Cancel",
+            tint = ScribeColors.Error,
+            modifier = Modifier.size(18.dp),
+        )
+    }
+}
+
+/** Takes back exactly the code points the last transcript inserted. */
+@Composable
+private fun UndoKey(onUndo: () -> Unit) {
+    KeyBox(
+        modifier = Modifier
+            .widthIn(min = ScribeSize.Key)
+            .fillMaxHeight()
+            .semantics { contentDescription = "Undo insert" },
+        shape = ScribeShape.Pill,
+        onClick = onUndo,
+    ) {
+        Text(
+            text = "Undo",
+            color = ScribeColors.Text,
+            fontSize = ScribeText.Label,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            modifier = Modifier.padding(horizontal = 10.dp),
+        )
     }
 }
 
@@ -217,17 +248,17 @@ private fun LayoutButton(
 }
 
 /**
- * The product's one primary control. The trailing segment is the dictation
- * language while idle and Undo for a few seconds after a transcript, so the
- * confirmation never adds a row to the keyboard.
+ * The product's one primary control. Its leading segment is the dictation
+ * language; the confirmation after a transcript only changes the label here,
+ * because the Undo it pairs with sits at the right edge of the top bar.
  */
 @Composable
 private fun DictatePill(state: ScribeUiState, actions: ScribeActions, modifier: Modifier) {
+    val accent = rememberScribeAccent()
     val recording = state.phase == Phase.RECORDING
     val processing = state.phase == Phase.TRANSCRIBING
     val idle = !recording && !processing
     val notice = state.notice
-    val canUndo = notice != null && state.noticeUndoCodePoints > 0
     val label = when {
         processing -> "Processing…"
         recording && state.locked -> "Stop"
@@ -235,26 +266,15 @@ private fun DictatePill(state: ScribeUiState, actions: ScribeActions, modifier: 
         notice != null -> notice
         else -> "Dictate"
     }
-    val brush = when {
-        recording -> Brush.horizontalGradient(
-            listOf(ScribeColors.Recording, ScribeColors.RecordingDeep),
-        )
-        processing -> Brush.horizontalGradient(
-            listOf(ScribeColors.Surface, ScribeColors.Key),
-        )
-        else -> Brush.horizontalGradient(
-            listOf(ScribeColors.Green, ScribeColors.GreenDeep),
-        )
+    // One flat fill per state: the pill is a single colour, never a gradient.
+    val fill = when {
+        recording -> ScribeColors.Recording
+        processing -> ScribeColors.Surface
+        else -> accent.base
     }
-    val onPill = if (recording) ScribeColors.Text else if (processing) {
-        ScribeColors.Text
-    } else {
-        ScribeColors.Background
-    }
-    val segmentLabel = if (canUndo) "Undo" else languageShort(state.language)
-    val segmentAction = if (canUndo) actions.onUndoInsert else actions.onToggleLanguage
+    val onPill = if (recording || processing) ScribeColors.Text else accent.on
 
-    Box(modifier = modifier.clip(ScribeShape.Pill).background(brush)) {
+    Box(modifier = modifier.clip(ScribeShape.Pill).background(fill)) {
         // The label centres on the pill itself; the language segment rides on
         // top of the left edge so the two never share the layout width.
         Box(
@@ -311,15 +331,13 @@ private fun DictatePill(state: ScribeUiState, actions: ScribeActions, modifier: 
                     .widthIn(min = 52.dp)
                     .fillMaxHeight()
                     .alpha(if (idle) 1f else DISABLED_ALPHA)
-                    .combinedClickable(enabled = idle, onClick = segmentAction)
-                    .semantics {
-                        contentDescription = if (canUndo) "Undo insert" else "Dictation language"
-                    }
+                    .combinedClickable(enabled = idle, onClick = actions.onToggleLanguage)
+                    .semantics { contentDescription = "Dictation language" }
                     .padding(horizontal = 10.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    text = segmentLabel,
+                    text = languageShort(state.language),
                     color = onPill,
                     fontSize = ScribeText.Body,
                     fontWeight = FontWeight.SemiBold,
@@ -407,7 +425,7 @@ private fun CompactBody(state: ScribeUiState, actions: ScribeActions) {
         // Quick inserts scroll; delete is pinned outside the scroll area so a
         // long command never pushes it off the row.
         Row(
-            Modifier.fillMaxWidth().height(ScribeSize.Chip),
+            Modifier.fillMaxWidth().height(ScribeSize.Key),
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Row(
@@ -427,14 +445,12 @@ private fun CompactBody(state: ScribeUiState, actions: ScribeActions) {
                 modifier = Modifier.width(ScribeSize.Key).fillMaxHeight(),
                 enabled = enabled,
                 label = "Delete",
-                background = ScribeColors.KeyRaised,
-                border = ScribeColors.KeyRaisedEdge,
                 onRepeat = actions.onBackspace,
             ) {
                 Icon(
                     painter = painterResource(R.drawable.ic_backspace),
                     contentDescription = null,
-                    tint = ScribeColors.Error,
+                    tint = ScribeColors.Text,
                     modifier = Modifier.size(20.dp),
                 )
             }
@@ -448,6 +464,7 @@ private fun CompactBody(state: ScribeUiState, actions: ScribeActions) {
                 enabled = enabled,
                 onClick = actions.onToggleEmoji,
             )
+            Key(",", Modifier.width(34.dp).fillMaxHeight(), enabled) { actions.onText(",") }
             SpaceKey(Modifier.weight(1f).fillMaxHeight(), enabled) { actions.onText(" ") }
             Key(".", Modifier.width(34.dp).fillMaxHeight(), enabled) { actions.onText(".") }
             LayoutButton(
@@ -459,6 +476,76 @@ private fun CompactBody(state: ScribeUiState, actions: ScribeActions) {
             )
             EnterKey(
                 modifier = Modifier.width(54.dp).fillMaxHeight(),
+                enabled = enabled,
+                send = state.sendKey,
+                onClick = actions.onEnter,
+            )
+        }
+    }
+}
+
+/**
+ * A digits-only editor gets a number pad: four rows of digits and the mark the
+ * field asks for, with delete and enter down the right rail.
+ */
+@Composable
+private fun NumberPadBody(state: ScribeUiState, actions: ScribeActions) {
+    val enabled = state.phase == Phase.IDLE || state.phase == Phase.ERROR
+    val gap = 4.dp
+    val marks = if (state.numberPad == NumberPad.PHONE) {
+        listOf("+", "0", "#")
+    } else {
+        listOf(",", "0", ".")
+    }
+    val rows = listOf(
+        listOf("1", "2", "3"),
+        listOf("4", "5", "6"),
+        listOf("7", "8", "9"),
+        marks,
+    )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 5.dp)
+            .alpha(if (enabled) 1f else DISABLED_ALPHA),
+        horizontalArrangement = Arrangement.spacedBy(gap),
+    ) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(gap),
+        ) {
+            for (row in rows) {
+                Row(
+                    Modifier.fillMaxWidth().height(ScribeSize.Key),
+                    horizontalArrangement = Arrangement.spacedBy(gap),
+                ) {
+                    for (key in row) {
+                        Key(key, Modifier.weight(1f).fillMaxHeight(), enabled) {
+                            actions.onText(key)
+                        }
+                    }
+                }
+            }
+        }
+        Column(
+            modifier = Modifier.width(64.dp).height(ScribeSize.Key * 4 + gap * 3),
+            verticalArrangement = Arrangement.spacedBy(gap),
+        ) {
+            RepeatKey(
+                modifier = Modifier.fillMaxWidth().weight(1f),
+                enabled = enabled,
+                label = "Delete",
+                onRepeat = actions.onBackspace,
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_backspace),
+                    contentDescription = null,
+                    tint = ScribeColors.Text,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+            EnterKey(
+                modifier = Modifier.fillMaxWidth().weight(1f),
                 enabled = enabled,
                 send = state.sendKey,
                 onClick = actions.onEnter,
@@ -560,6 +647,7 @@ private fun ClipboardStrip(
  */
 @Composable
 private fun ClipboardDock(state: ScribeUiState, actions: ScribeActions) {
+    val accent = rememberScribeAccent()
     val enabled = state.phase == Phase.IDLE || state.phase == Phase.ERROR
     Row(
         modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
@@ -579,7 +667,7 @@ private fun ClipboardDock(state: ScribeUiState, actions: ScribeActions) {
                 painter = painterResource(R.drawable.ic_clipboard),
                 contentDescription = "Clipboard",
                 tint = if (state.clipboardView != ClipboardView.HIDDEN) {
-                    ScribeColors.Green
+                    accent.base
                 } else {
                     ScribeColors.Text
                 },
@@ -654,6 +742,7 @@ private enum class ShiftMode { OFF, ONCE, LOCKED }
 
 @Composable
 private fun KeyboardBody(state: ScribeUiState, actions: ScribeActions) {
+    val accent = rememberScribeAccent()
     var shift by remember { mutableStateOf(ShiftMode.OFF) }
     var lastShiftTap by remember { mutableLongStateOf(0L) }
     var symbols by remember { mutableStateOf(false) }
@@ -703,7 +792,7 @@ private fun KeyboardBody(state: ScribeUiState, actions: ScribeActions) {
                 KeyBox(
                     modifier = Modifier.width(48.dp).fillMaxHeight(),
                     enabled = enabled,
-                    background = if (shift == ShiftMode.OFF) ScribeColors.Key else ScribeColors.Green,
+                    background = if (shift == ShiftMode.OFF) ScribeColors.Key else accent.base,
                     onClick = ::tapShift,
                 ) {
                     Column(
@@ -720,19 +809,19 @@ private fun KeyboardBody(state: ScribeUiState, actions: ScribeActions) {
                             tint = if (shift == ShiftMode.OFF) {
                                 ScribeColors.Text
                             } else {
-                                ScribeColors.Background
+                                accent.on
                             },
                             modifier = Modifier.size(20.dp),
                         )
                         // A locked shift keeps a small bar under the arrow so
-                        // it is not just the same green as a one-shot shift.
+                        // it is not just the same accent as a one-shot shift.
                         if (shift == ShiftMode.LOCKED) {
                             Spacer(Modifier.height(3.dp))
                             Box(
                                 Modifier
                                     .width(14.dp)
                                     .height(2.dp)
-                                    .background(ScribeColors.Background),
+                                    .background(accent.on),
                             )
                         }
                     }
@@ -746,14 +835,12 @@ private fun KeyboardBody(state: ScribeUiState, actions: ScribeActions) {
                     modifier = Modifier.width(44.dp).fillMaxHeight(),
                     enabled = enabled,
                     label = "Delete",
-                    background = ScribeColors.KeyRaised,
-                    border = ScribeColors.KeyRaisedEdge,
                     onRepeat = actions.onBackspace,
                 ) {
                     Icon(
                         painter = painterResource(R.drawable.ic_backspace),
                         contentDescription = null,
-                        tint = ScribeColors.Error,
+                        tint = ScribeColors.Text,
                         modifier = Modifier.size(20.dp),
                     )
                 }
@@ -814,14 +901,20 @@ private fun BottomRow(
             enabled = enabled,
             onClick = onMode,
         ) {
-            Text("?123", color = ScribeColors.Text, fontSize = ScribeText.Body)
+            Icon(
+                painter = painterResource(R.drawable.ic_symbols),
+                contentDescription = "Symbols",
+                tint = ScribeColors.Text,
+                modifier = Modifier.size(20.dp),
+            )
         }
-        Key(",", Modifier.width(34.dp).fillMaxHeight(), enabled) { onText(",") }
         EmojiKey(
             modifier = Modifier.width(48.dp).fillMaxHeight(),
             enabled = enabled,
             onClick = onEmoji,
         )
+        // Space is flanked by the two marks a sentence ends on.
+        Key(",", Modifier.width(34.dp).fillMaxHeight(), enabled) { onText(",") }
         SpaceKey(Modifier.weight(1f).fillMaxHeight(), enabled) { onSpace() }
         Key(".", Modifier.width(34.dp).fillMaxHeight(), enabled) { onText(".") }
         LayoutButton(
@@ -867,14 +960,12 @@ private fun SymbolRows(
                     modifier = Modifier.width(44.dp).fillMaxHeight(),
                     enabled = enabled,
                     label = "Delete",
-                    background = ScribeColors.KeyRaised,
-                    border = ScribeColors.KeyRaisedEdge,
                     onRepeat = actions.onBackspace,
                 ) {
                     Icon(
                         painter = painterResource(R.drawable.ic_backspace),
                         contentDescription = null,
-                        tint = ScribeColors.Error,
+                        tint = ScribeColors.Text,
                         modifier = Modifier.size(20.dp),
                     )
                 }
@@ -892,7 +983,9 @@ private fun SymbolRows(
         ) {
             Text("ABC", color = ScribeColors.Text, fontSize = ScribeText.Body)
         }
+        Key(",", Modifier.width(34.dp).fillMaxHeight(), enabled) { actions.onText(",") }
         SpaceKey(Modifier.weight(1f).fillMaxHeight(), enabled) { actions.onText(" ") }
+        Key(".", Modifier.width(34.dp).fillMaxHeight(), enabled) { actions.onText(".") }
         LayoutButton(
             layout = KeyboardMode.FULL,
             enabled = enabled,
@@ -1000,6 +1093,7 @@ private fun ClipCard(
     onLongClick: (() -> Unit)? = null,
 ) {
     val shape = ScribeShape.Surface
+    val accent = rememberScribeAccent()
     Box(
         modifier = modifier
             .height(ScribeSize.Card)
@@ -1009,7 +1103,7 @@ private fun ClipCard(
             // the only thing that says which one.
             .then(
                 if (selected) {
-                    Modifier.border(1.5.dp, ScribeColors.Green, shape)
+                    Modifier.border(1.5.dp, accent.base, shape)
                 } else {
                     Modifier
                 },
@@ -1299,18 +1393,19 @@ private fun FilterButton(
     selected: Boolean,
     onClick: () -> Unit,
 ) {
+    val accent = rememberScribeAccent()
     Box(
         modifier = Modifier
             .fillMaxHeight()
             .clip(ScribeShape.Chip)
-            .background(if (selected) ScribeColors.Green else ScribeColors.Key)
+            .background(if (selected) accent.base else ScribeColors.Key)
             .combinedClickable(onClick = onClick)
             .padding(horizontal = 10.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = filter.label,
-            color = if (selected) ScribeColors.Background else ScribeColors.Muted,
+            color = if (selected) accent.on else ScribeColors.Muted,
             fontSize = ScribeText.Caption,
             fontWeight = FontWeight.Medium,
             letterSpacing = 0.4.sp,
@@ -1565,17 +1660,18 @@ private fun LanguageButton(
     modifier: Modifier,
     onClick: () -> Unit,
 ) {
+    val accent = rememberScribeAccent()
     Box(
         modifier = modifier
             .height(ScribeSize.Key)
             .clip(ScribeShape.Surface)
-            .background(if (selected) ScribeColors.Green else ScribeColors.Key)
+            .background(if (selected) accent.base else ScribeColors.Key)
             .combinedClickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = name,
-            color = if (selected) ScribeColors.Background else ScribeColors.Text,
+            color = if (selected) accent.on else ScribeColors.Text,
             fontSize = ScribeText.Body,
             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
             maxLines = 1,
@@ -1681,8 +1777,6 @@ private fun SpaceKey(
     KeyBox(
         modifier = modifier.semantics { contentDescription = "Space" },
         enabled = enabled,
-        background = ScribeColors.KeyRaised,
-        border = ScribeColors.KeyRaisedEdge,
         onClick = onClick,
     ) {}
 }
@@ -1715,17 +1809,18 @@ private fun EnterKey(
     send: Boolean,
     onClick: () -> Unit,
 ) {
+    // The one key a dictation hands off to wears the phone's own accent.
+    val accent = rememberScribeAccent()
     KeyBox(
         modifier = modifier,
         enabled = enabled,
-        background = if (send) ScribeColors.Green else ScribeColors.KeyRaised,
-        border = if (send) null else ScribeColors.Green.copy(alpha = 0.5f),
+        background = if (send) accent.base else ScribeColors.Key,
         onClick = onClick,
     ) {
         Icon(
             painter = painterResource(if (send) R.drawable.ic_send else R.drawable.ic_enter),
             contentDescription = if (send) "Send" else "Enter",
-            tint = if (send) ScribeColors.Background else ScribeColors.Green,
+            tint = if (send) accent.on else accent.base,
             modifier = Modifier.size(22.dp),
         )
     }

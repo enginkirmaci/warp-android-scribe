@@ -1,0 +1,23 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- The character page's mark: equals, backslash, angle bracket. -->
+    <path
+        android:pathData="M2.9,9.6 L7.7,9.6 M2.9,14.4 L7.7,14.4"
+        android:strokeColor="#E5E7EB"
+        android:strokeWidth="1.9"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M9.9,7.2 L12.7,16.8"
+        android:strokeColor="#E5E7EB"
+        android:strokeWidth="1.9"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M21.2,7.6 L17.0,12 L21.2,16.4"
+        android:strokeColor="#E5E7EB"
+        android:strokeWidth="1.9"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+</vector>
