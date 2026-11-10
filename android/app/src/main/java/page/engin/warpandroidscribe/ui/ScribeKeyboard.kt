@@ -254,36 +254,12 @@ private fun DictatePill(state: ScribeUiState, actions: ScribeActions, modifier: 
     val segmentLabel = if (canUndo) "Undo" else languageShort(state.language)
     val segmentAction = if (canUndo) actions.onUndoInsert else actions.onToggleLanguage
 
-    Row(
-        modifier = modifier.clip(ScribeShape.Pill).background(brush),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
+    Box(modifier = modifier.clip(ScribeShape.Pill).background(brush)) {
+        // The label centres on the pill itself; the language segment rides on
+        // top of the left edge so the two never share the layout width.
         Box(
             modifier = Modifier
-                .widthIn(min = 52.dp)
-                .fillMaxHeight()
-                .alpha(if (idle) 1f else DISABLED_ALPHA)
-                .combinedClickable(enabled = idle, onClick = segmentAction)
-                .semantics {
-                    contentDescription = if (canUndo) "Undo insert" else "Dictation language"
-                }
-                .padding(horizontal = 10.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = segmentLabel,
-                color = onPill,
-                fontSize = ScribeText.Body,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-            )
-        }
-        Box(Modifier.width(1.dp).height(20.dp).background(onPill.copy(alpha = 0.16f)))
-
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxHeight()
+                .matchParentSize()
                 .then(
                     if (processing) {
                         Modifier
@@ -325,6 +301,32 @@ private fun DictatePill(state: ScribeUiState, actions: ScribeActions, modifier: 
                     maxLines = 1,
                 )
             }
+        }
+        Row(
+            modifier = Modifier.fillMaxHeight().align(Alignment.CenterStart),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .widthIn(min = 52.dp)
+                    .fillMaxHeight()
+                    .alpha(if (idle) 1f else DISABLED_ALPHA)
+                    .combinedClickable(enabled = idle, onClick = segmentAction)
+                    .semantics {
+                        contentDescription = if (canUndo) "Undo insert" else "Dictation language"
+                    }
+                    .padding(horizontal = 10.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = segmentLabel,
+                    color = onPill,
+                    fontSize = ScribeText.Body,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                )
+            }
+            Box(Modifier.width(1.dp).height(20.dp).background(onPill.copy(alpha = 0.16f)))
         }
     }
 }
@@ -1720,10 +1722,11 @@ private fun EnterKey(
         border = if (send) null else ScribeColors.Green.copy(alpha = 0.5f),
         onClick = onClick,
     ) {
-        Text(
-            text = if (send) "↑" else "↵",
-            color = if (send) ScribeColors.Background else ScribeColors.Green,
-            fontSize = ScribeText.Key,
+        Icon(
+            painter = painterResource(if (send) R.drawable.ic_send else R.drawable.ic_enter),
+            contentDescription = if (send) "Send" else "Enter",
+            tint = if (send) ScribeColors.Background else ScribeColors.Green,
+            modifier = Modifier.size(22.dp),
         )
     }
 }
