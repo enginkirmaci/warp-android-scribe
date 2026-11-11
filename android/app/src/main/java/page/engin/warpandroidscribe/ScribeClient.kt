@@ -103,7 +103,12 @@ class ScribeClient(private val prefs: ScribePrefs) {
         client.newCall(request).execute().use { response ->
             val payload = response.body.string()
             if (!response.isSuccessful) throw failure(response.code, payload)
-            return runCatching { JSONObject(payload).optString("version", "?") }.getOrDefault("?")
+            return runCatching {
+                val json = JSONObject(payload)
+                val version = json.optString("version", "?")
+                val build = json.optString("build", "")
+                if (build.isEmpty()) version else "$version, build $build"
+            }.getOrDefault("?")
         }
     }
 

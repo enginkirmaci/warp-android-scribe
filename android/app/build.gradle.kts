@@ -5,6 +5,22 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// The suite version lives in version.toml at the repository root. The APK
+// derives its own versionName/versionCode from it, so the phone never carries
+// a second copy that drifts from the desktop apps.
+val suiteToml = rootProject.file("../../../version.toml").readText()
+val suiteVersion = Regex("""(?m)^\s*version\s*=\s*"([^"]+)"""")
+    .find(suiteToml)
+    ?.groupValues
+    ?.get(1)
+    ?: error("version.toml has no version line")
+val suiteParts = suiteVersion.split(".")
+check(suiteParts.size == 3) { "version.toml version is not MAJOR.MINOR.PATCH: $suiteVersion" }
+val (suiteMajor, suiteMinor, suitePatch) = suiteParts.map {
+    it.toIntOrNull() ?: error("version.toml version is not numeric: $suiteVersion")
+}
+val suiteVersionCode = suiteMajor * 10_000_000 + suiteMinor * 100_000 + suitePatch
+
 android {
     namespace = "com.engin.warpandroidscribe"
     compileSdk = 37
@@ -13,8 +29,8 @@ android {
         applicationId = "com.engin.warpandroidscribe"
         minSdk = 26
         targetSdk = 37
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = suiteVersionCode
+        versionName = suiteVersion
     }
 
     buildFeatures {

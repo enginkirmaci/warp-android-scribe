@@ -24,3 +24,6 @@ tracing-subscriber = { workspace = true }
 [dev-dependencies]
 http-body-util = "0.1.5"
 tower = { version = "0.5", features = ["util"] }
+
+[build-dependencies]
+warpui-kit-build = { workspace = true }

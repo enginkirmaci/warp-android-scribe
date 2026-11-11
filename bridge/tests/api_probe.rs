@@ -235,6 +235,8 @@ async fn health_is_token_checked() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["ok"], true);
     assert_eq!(body["service"], "warp-android-scribe-bridge");
+    assert_eq!(body["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(body["channel"], "dev");
     assert_eq!(body["transcriber"], "mock");
 }
 
