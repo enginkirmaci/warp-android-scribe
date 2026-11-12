@@ -15,10 +15,9 @@ phone IME ──HTTP/1.1, bearer token──▶ NAS bridge ──CLI──▶ Su
    └─ 16 kHz mono WAV, ≤ 10 MB / 120 s     └─ /transcribe?engine=hex&lang=tr, return text
 ```
 
-The Android app is deliberately not part of the suite's desktop release: it is
-not in `apps.toml`, `scripts/build.sh` never sees it, and it ships as a sideloaded
-APK. The bridge *is* a member of the suite Cargo workspace so the normal Rust
-gate compiles and tests it.
+The Android app is deliberately not part of the desktop suite: the desktop
+build never sees it, and it ships as a sideloaded APK. The bridge has its own
+Rust workspace root in this repository so the Rust gate compiles and tests it.
 
 ## Layout
 

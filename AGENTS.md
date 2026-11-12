@@ -12,9 +12,9 @@ Two halves, two toolchains:
   member and is in the CI clippy/test selectors. It needs no GPUI and no
   Android SDK.
 - `android/` is a standalone Gradle project (AGP 9.5.1, built-in Kotlin,
-  Compose). It is **not** a Cargo member, **not** in `apps.toml` and **not**
-  part of `scripts/build.sh` or the suite release. Do not add an Android
-  dependency to the root workspace.
+  Compose). It is **not** a Cargo member of the desktop workspace and **not**
+  part of the desktop suite build or release. Do not add an Android
+  dependency to the bridge's workspace.
 
 ## Bridge
 
