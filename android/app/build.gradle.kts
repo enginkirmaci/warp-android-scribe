@@ -8,7 +8,7 @@ plugins {
 // The suite version lives in version.toml at the repository root. The APK
 // derives its own versionName/versionCode from it, so the phone never carries
 // a second copy that drifts from the desktop apps.
-val suiteToml = rootProject.file("../../../version.toml").readText()
+val suiteToml = rootProject.file("../version.toml").readText()
 val suiteVersion = Regex("""(?m)^\s*version\s*=\s*"([^"]+)"""")
     .find(suiteToml)
     ?.groupValues
