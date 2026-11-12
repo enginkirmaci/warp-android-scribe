@@ -1,4 +1,4 @@
 # This app's version and build counter. `scripts/version.py` is the only writer.
 # The APK versionName and versionCode derive from this file.
-version = "0.1.2"
+version = "0.1.3"
 build = 1

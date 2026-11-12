@@ -4,6 +4,6 @@
          use cleartext; a different host needs an HTTPS URL or an edit here. -->
     <base-config cleartextTrafficPermitted="false" />
     <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="false"><nas-lan></domain>
+        <domain includeSubdomains="false">nas.local</domain>
     </domain-config>
 </network-security-config>

@@ -192,8 +192,8 @@ class ScribePrefs(context: Context) {
     }
 
     companion object {
-        const val DEFAULT_LOCAL_URL = "http://<nas-lan>:8787"
-        const val DEFAULT_REMOTE_URL = "https://<nas-host>"
+        const val DEFAULT_LOCAL_URL = "http://nas.local:8787"
+        const val DEFAULT_REMOTE_URL = "https://nas.example"
         const val MAX_SHORTCUTS = 8
 
         val DEFAULT_SHORTCUTS = listOf("/goal", "/compact")
