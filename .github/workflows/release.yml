@@ -2,7 +2,7 @@ name: release
 
 # Tag the commit whose version.toml says v<version>. The APK is sideloaded; the
 # bridge binary is installed on the NAS by hand. The bridge job needs
-# KITS_READ_TOKEN, the Gradle job does not.
+# a token, the Gradle job does not.
 on:
   push:
     tags:
@@ -37,16 +37,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-
-      - name: Configure the kit read token
-        env:
-          KITS_READ_TOKEN: ${{ secrets.KITS_READ_TOKEN }}
-        run: |
-          if [ -z "$KITS_READ_TOKEN" ]; then
-            echo "::error::KITS_READ_TOKEN is not set; the kit git dependency cannot be fetched"
-            exit 1
-          fi
-          git config --global url."https://x-access-token:${KITS_READ_TOKEN}@github.com/".insteadOf "https://github.com/"
 
       - name: Read the pinned channel
         run: echo "channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
