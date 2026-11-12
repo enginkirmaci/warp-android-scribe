@@ -1,0 +1,128 @@
+name: release
+
+# Tag the commit whose version.toml says v<version>. The APK is sideloaded; the
+# bridge binary is installed on the NAS by hand. The bridge job needs
+# KITS_READ_TOKEN, the Gradle job does not.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          actual=$(python3 scripts/version.py show --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["version"])')
+          test "$tag" = "$actual" || {
+            echo "::error::version.toml says $actual, the tag says $tag"
+            exit 1
+          }
+          echo "version=$actual" >> "$GITHUB_OUTPUT"
+
+  bridge:
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Configure the kit read token
+        env:
+          KITS_READ_TOKEN: ${{ secrets.KITS_READ_TOKEN }}
+        run: |
+          if [ -z "$KITS_READ_TOKEN" ]; then
+            echo "::error::KITS_READ_TOKEN is not set; the kit git dependency cannot be fetched"
+            exit 1
+          fi
+          git config --global url."https://x-access-token:${KITS_READ_TOKEN}@github.com/".insteadOf "https://github.com/"
+
+      - name: Read the pinned channel
+        run: echo "channel=$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
+        id: toolchain
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ steps.toolchain.outputs.channel }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+
+      - name: cargo build --release
+        run: cargo build --release --locked -p warp-android-scribe-bridge
+
+      - name: Stage the bridge binary
+        run: |
+          mkdir -p dist
+          install -m755 target/release/warp-android-scribe-bridge \
+            "dist/warp-android-scribe-bridge-${{ needs.version.outputs.version }}-linux-x86_64"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: bridge
+          path: dist/*
+          if-no-files-found: error
+
+  android:
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Gradle build
+        working-directory: android
+        run: ./gradlew assembleDebug
+
+      - name: Stage the APK
+        run: |
+          mkdir -p dist
+          cp android/app/build/outputs/apk/debug/app-debug.apk \
+            "dist/warp-android-scribe-${{ needs.version.outputs.version }}-debug.apk"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: apk
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    needs: [version, bridge, android]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Write checksums
+        run: |
+          cd artifacts
+          sha256sum * > SHA256SUMS
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: warp-android-scribe ${{ github.ref_name }}
+          body: |
+            Sideloaded debug APK and the Linux bridge binary for
+            warp-android-scribe ${{ needs.version.outputs.version }}.
+          files: |
+            artifacts/*
