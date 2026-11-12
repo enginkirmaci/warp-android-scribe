@@ -1,0 +1,6 @@
+[workspace]
+# The Android repository has one Rust crate (the bridge). The workspace root
+# exists so cargo, version.py and Cargo.lock live at the repository root; the
+# Gradle project is a separate build.
+resolver = "3"
+members = ["bridge"]

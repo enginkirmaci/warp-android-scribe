@@ -1,0 +1,7 @@
+[app]
+package = "warp-android-scribe-bridge"
+notes = """
+LAN HTTP bridge for the Android dictation IME: bearer-token /transcribe over
+Superwhisper and Hex, plus the phone's settings and health endpoints. The APK
+is sideloaded; the bridge is installed on the NAS by hand.
+"""
